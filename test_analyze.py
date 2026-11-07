@@ -51,6 +51,16 @@ class TestDetectors(unittest.TestCase):
         self.assertIn('20:00', f['detail'])
         self.assertIn('02:00', f['action'])
 
+    def test_away(self):
+        ctx = {('F001', t): {'occ': 0 if i % 4 == 0 else 2} for i, t in enumerate(H)}
+        # 10W standby normally, but 60W when empty on some hours
+        d = data({'F001-A05': series(lambda i: 0.06 if i % 4 == 0 and i < 14 * 24 else (0.01 if i % 4 == 0 else 0.05))}, ctx)
+        [f] = analyze.away(d)
+        self.assertEqual((f['channel'], f['kind']), ('F001-A05', 'away'))
+        self.assertGreater(f['kwh'], 0)
+        self.assertIn('empty', f['detail'])
+        self.assertEqual(analyze.away(d, skip={'F001-A05'}), [])
+
     def test_leaderboard(self):
         b = analyze.leaderboard(data({'F001-A01': series(lambda i: 0.1), 'F002-A01': series(lambda i: 0.1),
                                       'F003-A01': series(lambda i: 0.3)}))
@@ -84,6 +94,7 @@ class TestDataset(unittest.TestCase):
     def test_planted_issues_found(self):
         got = {(f['channel'], f['kind']) for f in self.fs}
         self.assertIn(('F002-A01', 'fault'), got)
+        self.assertIn(('F004-A05', 'away'), got)
         self.assertIn(('F005-A06', 'always-on'), got)
         self.assertIn(('F007-A07', 'heating'), got)
 
