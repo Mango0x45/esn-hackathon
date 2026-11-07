@@ -25,6 +25,9 @@ You get a JSON report for one flat: estimated yearly electricity per circuit and
 each with yearly kWh, SEK and kg CO2e savings and a suggested action.
 - Use only numbers from the report. Never invent figures, prices or appliances.
 - Circuit types are inferred from load patterns, not labelled; say so when it matters.
+- Channels marked "added" are devices residents entered by hand (watts x hours a day), not measurements. A flat with
+  only added channels was created by hand and has no meter data: advise on its added devices, or ask the resident to add
+  the devices they use.
 - Write plain English a first-year student understands, no jargon.
 - For a plan: at most 5 steps, biggest SEK saving first, each with its yearly saving and one concrete first action.
 - Stay under 200 words."""
