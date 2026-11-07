@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WasteWatt</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f6f6f4;
+  --surface: #fcfcfb;
+  --border: #e3e2de;
+  --text: #0b0b0b;
+  --text-2: #52514e;
+  --accent: #1a7f55;
+  --bar: #2a78d6;
+  --track: #ecebe7;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #111110;
+    --surface: #1a1a19;
+    --border: #2e2e2c;
+    --text: #f0efec;
+    --text-2: #c3c2b7;
+    --accent: #4cc38a;
+    --bar: #3987e5;
+    --track: #262624;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111110;
+  --surface: #1a1a19;
+  --border: #2e2e2c;
+  --text: #f0efec;
+  --text-2: #c3c2b7;
+  --accent: #4cc38a;
+  --bar: #3987e5;
+  --track: #262624;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; }
+main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
+h1 { margin: 0; font-size: 28px; }
+h2 { font-size: 18px; margin: 32px 0 12px; }
+p { margin: 0 0 8px; }
+.muted { color: var(--text-2); font-size: 14px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+label { font-weight: 600; margin-right: 8px; }
+select, button, textarea { font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+button { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+button:disabled { opacity: .6; cursor: wait; }
+.hero { font-size: 48px; font-weight: 700; line-height: 1.1; }
+.stats { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 8px; }
+.stats b { font-size: 20px; }
+.badge { display: inline-block; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; margin-right: 6px; color: var(--text-2); }
+.card h3 { margin: 8px 0 4px; font-size: 17px; }
+.todo { border-left: 3px solid var(--accent); padding-left: 10px; margin-top: 8px; }
+.nums { margin-top: 8px; font-weight: 600; }
+.bar-row { display: grid; grid-template-columns: minmax(0, 11rem) 1fr; gap: 8px; align-items: center; margin: 6px 0; }
+.bar-row span { font-size: 14px; overflow-wrap: anywhere; }
+.track { position: relative; height: 16px; }
+.bar { height: 16px; background: var(--bar); border-radius: 0 4px 4px 0; min-width: 2px; }
+.bar-val { position: absolute; top: -2px; font-size: 13px; color: var(--text-2); white-space: nowrap; padding-left: 6px; }
+@media (max-width: 480px) { .bar-row { grid-template-columns: 1fr; gap: 2px; } .hero { font-size: 40px; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>WasteWatt</h1>
+  <p class="muted">Finds the electricity your student flat wastes and tells you what to do about it, in kWh, kronor and CO₂e.</p>
+
+  <div class="card">
+    <label for="flat">Your flat</label>
+    <select id="flat"></select>
+  </div>
+
+  <div class="card" id="summary" aria-live="polite"></div>
+
+  <h2>What to fix first</h2>
+  <div id="findings"></div>
+
+  <h2>Where your electricity goes</h2>
+  <div class="card">
+    <div id="bars" role="list"></div>
+    <p class="muted" style="margin-top:12px">Estimated kWh per year. The dataset has no appliance labels, so types are inferred from each circuit's load pattern.</p>
+  </div>
+
+  <h2>About the data</h2>
+  <div class="card muted" id="quality"></div>
+</main>
+<script>
+const fmt = n => Math.round(n).toLocaleString('en');
+const $ = id => document.getElementById(id);
+const KIND = {fault: 'Faulty appliance', 'always-on': 'Always on', heating: 'Heating', timing: 'Timing'};
+
+function el(tag, props = {}, ...kids) {
+  const e = Object.assign(document.createElement(tag), props);
+  e.append(...kids);
+  return e;
+}
+
+async function get(url) {
+  const r = await fetch(url);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+function summary(r) {
+  const s = r.savings, p = r.per_student;
+  $('summary').replaceChildren(s.sek > 0
+    ? el('div', {},
+        el('p', {className: 'muted', textContent: 'Your flat could save every year'}),
+        el('div', {className: 'hero', textContent: `${fmt(s.sek)} SEK`}),
+        el('div', {className: 'stats'},
+          el('span', {}, el('b', {textContent: fmt(s.kwh)}), ' kWh'),
+          el('span', {}, el('b', {textContent: s.co2.toFixed(1)}), ' kg CO₂e'),
+          el('span', {}, el('b', {textContent: `${fmt(p.sek)} SEK`}), ` per student (${r.residents} residents)`)),
+        el('p', {className: 'muted', style: 'margin-top:8px', textContent: `Out of about ${fmt(r.use.kwh)} kWh (${fmt(r.use.sek)} SEK) a year.`}))
+    : el('p', {textContent: 'No significant waste found in this flat. Nice work.'}));
+}
+
+function findings(r) {
+  $('findings').replaceChildren(...r.findings.map(f => el('div', {className: 'card'},
+    el('span', {className: 'badge', textContent: KIND[f.kind] || f.kind}),
+    el('span', {className: 'badge', textContent: `inferred: ${f.type}`}),
+    el('h3', {textContent: f.title}),
+    el('p', {textContent: f.detail}),
+    el('p', {className: 'todo', textContent: f.action}),
+    el('p', {className: 'nums', textContent: f.kwh
+      ? `Saves ${fmt(f.kwh)} kWh · ${fmt(f.sek)} SEK · ${f.co2.toFixed(1)} kg CO₂e per year`
+      : `Same energy, saves ${fmt(f.sek)} SEK · ${f.co2.toFixed(1)} kg CO₂e per year`}))));
+}
+
+function bars(r) {
+  const cs = [...r.channels].sort((a, b) => b.kwh - a.kwh);
+  const max = Math.max(...cs.map(c => c.kwh), 1);
+  $('bars').replaceChildren(...cs.map(c => {
+    const tip = `${c.type} (${c.channel}): ${fmt(c.kwh)} kWh, ${fmt(c.sek)} SEK per year, ${Math.round(c.coverage * 100)}% of hours measured`;
+    const w = c.kwh / max * 75;
+    return el('div', {className: 'bar-row', role: 'listitem', title: tip, ariaLabel: tip},
+      el('span', {textContent: c.type}),
+      el('div', {className: 'track'},
+        el('div', {className: 'bar', style: `width:${w}%`}),
+        el('span', {className: 'bar-val', style: `left:${w}%`, textContent: `${fmt(c.kwh)} kWh`})));
+  }));
+}
+
+async function show(flat) {
+  try {
+    const r = await get(`/api/report?flat=${encodeURIComponent(flat)}`);
+    summary(r); findings(r); bars(r);
+  } catch (e) {
+    $('summary').textContent = `Could not load the report: ${e.message}`;
+  }
+}
+
+async function init() {
+  const {flats, fleet, quality} = await get('/api/flats');
+  $('flat').replaceChildren(...Object.entries(flats).map(([id, n]) =>
+    el('option', {value: id, textContent: `${id} (${n} residents)`})));
+  $('flat').onchange = e => show(e.target.value);
+  const fixed = ['duplicate rows removed', 'impossible values dropped', 'missing values (not zero)', 'Wh converted to kWh', 'orphan appliance rows dropped'];
+  $('quality').replaceChildren(
+    el('p', {textContent: `Synthetic organiser dataset: 8 flats, ${fleet.residents} residents, 4 autumn weeks. ` +
+      `Before analysis we repaired or excluded: ${fixed.map(k => `${quality[k]} ${k}`).join(', ')}. ` +
+      `${(fleet.coverage * 100).toFixed(1)}% of appliance-hours were measured; missing hours count as unknown, never as zero.`}),
+    el('p', {textContent: `Across all flats, students could save ${fmt(fleet.expected.kwh)} kWh, ${fmt(fleet.expected.sek)} SEK and ` +
+      `${fleet.expected.co2} kg CO₂e each per year (70% of the ${fmt(fleet.potential.sek)} SEK potential, allowing for partial follow-through). ` +
+      `Yearly figures scale four weeks of October data and are estimates.`}));
+  show($('flat').value);
+}
+init().catch(e => { $('summary').textContent = `Could not reach the server: ${e.message}`; });
+</script>
+</body>
+</html>
