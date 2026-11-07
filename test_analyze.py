@@ -67,6 +67,13 @@ class TestDetectors(unittest.TestCase):
         self.assertEqual((dev['channel'], dev['type'], dev['kwh']), ('added', 'Gaming PC', round(0.1 * 5 * 365)))
         self.assertEqual(r['use']['kwh'], round(0.05 * 8760) + dev['kwh'])
 
+    def test_added_flat(self):
+        dev = {'id': 'x', 'name': 'Kettle', 'watts': 2000, 'hours': 0.25}
+        r = analyze.report(data({}), [], 'F009', [dev], {'residents': 2, 'area': 40, 'price_area': 'SE3'})
+        self.assertEqual((r['flat'], r['residents'], r['findings']), ('F009', 2, []))
+        self.assertEqual([c['type'] for c in r['channels']], ['Kettle'])
+        self.assertEqual(r['use']['kwh'], round(2 * 0.25 * 365))
+
 
 class TestDataset(unittest.TestCase):
     @classmethod

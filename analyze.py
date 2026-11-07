@@ -173,8 +173,9 @@ def total(fs, n=1):
     return {k: round(sum(f[k] for f in fs) / n, 1) for k in KEYS}
 
 
-def report(d, fs, flat, added=()):
-    f = d['flats'][flat]
+def report(d, fs, flat, added=(), info=None):
+    """info describes a flat added by hand; dataset flats use their own row."""
+    f = info or d['flats'][flat]
     price, carbon = rates(d, f['price_area'])
     use = [{'channel': a, 'type': kind(a), 'kwh': round(annual(d, a)), 'sek': round(annual(d, a) * price),
             'co2': round(annual(d, a) * carbon / 1000, 1),
