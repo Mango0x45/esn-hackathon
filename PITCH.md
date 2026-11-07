@@ -10,13 +10,14 @@ WasteWatt reads a flat's per-circuit electricity data, finds the waste a student
 
 ## What the demo shows (click path)
 1. `F002`: the fridge suddenly draws 2.2x its normal power from 15 Oct. That is a fault, not a bad reading, so tell the landlord.
-2. `F005`: an electronics circuit draws 128 W all night, 3.9x similar flats. Something is left on.
-3. `F007`: 95 % of the heater's energy goes into a room that is already at 22 °C or more.
-4. Every flat: delay-start the dishwasher/washer from 20:00 to the cheapest hour (same energy, lower price).
-5. "Get my plan": Gemini turns the flat's report into at most 5 steps, biggest saving first.
+2. `F004`: lighting & misc is left on across 88 hours when nobody was home.
+3. `F005`: an electronics circuit draws 128 W all night, 3.9x similar flats. Something is left on.
+4. `F007`: 95 % of the heater's energy goes into a room that is already at 22 °C or more.
+5. Every flat: delay-start the dishwasher/washer from 20:00 to the cheapest hour (same energy, lower price).
+6. "Get my plan": Gemini turns the flat's report into at most 5 steps, biggest saving first.
 
 ## Where the AI is
-- **Anomaly detection without labels.** The dataset has no appliance types. WasteWatt infers them from load shapes, finds lasting level shifts (faults), compares each circuit with the same circuit in similar flats (peer baseline), and checks heater use against indoor temperature and occupancy.
+- **Anomaly detection without labels.** The dataset has no appliance types. WasteWatt infers them from load shapes, finds lasting level shifts (faults), compares each circuit with the same circuit in similar flats (peer baseline), checks heater use against indoor temperature and occupancy, and detects lighting/appliances left on when the flat is empty.
 - **A trust layer before the maths.** Cleaning fixes about 1,100 defects in 37,715 readings: duplicates, Wh/kWh mixing, comma decimals, impossible values and orphan IDs. Missing data stays missing; it is never counted as zero.
 - **Gemini coach** (`gemini-3.6-flash`). It explains the findings in plain language and answers free questions. It may use only the report's numbers.
 
@@ -31,10 +32,10 @@ WasteWatt reads a flat's per-circuit electricity data, finds the waste a student
 | | kWh | SEK | kg CO₂e |
 |---|---:|---:|---:|
 | Baseline electricity use | 870 | ≈1,250 | ≈32 |
-| Technical potential | 155 | 271 | 6.6 |
-| **Expected (70 % follow-through)** | **108** | **190** | **4.6** |
+| Technical potential | 158 | 275 | 6.7 |
+| **Expected (70 % follow-through)** | **110** | **193** | **4.7** |
 
-Expected saving ≈ **12 % of each student's electricity**. The average hides a skewed split: three flats have one large leak (fault, always-on device, overheating). Every flat gains about 125–195 SEK/yr from timing alone.
+Expected saving ≈ **13 % of each student's electricity**. The average hides a skewed split: four flats have one large leak (fault, always-on device, lights while away, overheating). Every flat gains about 125–195 SEK/yr from timing alone.
 
 **How the numbers are made** (run `python3 analyze.py` to reproduce):
 - kWh: four weeks of cleaned October data, annualised. Always-on loads × 8,760 h. Heater × 212-day heating season (Oct–Apr, an assumption; October is milder than winter, so this is conservative). Timing × 365/28.
