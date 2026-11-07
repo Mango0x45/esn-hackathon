@@ -1,5 +1,7 @@
 """WasteWatt web app: serves the UI and the analysis API on http://localhost:8000."""
 import json
+import threading
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -9,12 +11,14 @@ from google.genai import errors, types
 
 import analyze
 import envfile
-from clean import load
+from clean import MAX_KWH, load
 
 envfile.load(Path(__file__).parent / '.env')
 D = load()
 FS = analyze.findings(D)
 UI = Path(__file__).parent / 'static' / 'index.html'
+DEVICES = Path(__file__).parent / 'devices.json'  # unmeasured devices residents add by hand, per flat
+LOCK = threading.Lock()
 COACH = """You are WasteWatt, an energy coach for students living in shared flats in Sweden.
 You get a JSON report for one flat: estimated yearly electricity per circuit and the waste the analysis found,
 each with yearly kWh, SEK and kg CO2e savings and a suggested action.
@@ -25,8 +29,22 @@ each with yearly kWh, SEK and kg CO2e savings and a suggested action.
 - Stay under 200 words."""
 
 
+def saved():
+    return json.loads(DEVICES.read_text()) if DEVICES.exists() else {}
+
+
+def save(devs):
+    tmp = DEVICES.with_suffix('.tmp')
+    tmp.write_text(json.dumps(devs, indent=1))
+    tmp.replace(DEVICES)  # atomic, so a crash mid-write can't corrupt the file
+
+
+def report(flat):
+    return analyze.report(D, FS, flat, saved().get(flat, []))
+
+
 def coach(flat, question):
-    report = json.dumps(analyze.report(D, FS, flat))
+    report_ = json.dumps(report(flat))
     try:
         client = genai.Client()
     except ValueError:  # the SDK raises this when GEMINI_API_KEY is not set
@@ -34,7 +52,7 @@ def coach(flat, question):
     try:
         resp = client.models.generate_content(
             model='gemini-3.6-flash', config=types.GenerateContentConfig(system_instruction=COACH),
-            contents=f'<report>{report}</report>\n\n{question or "Give me my action plan."}')
+            contents=f'<report>{report_}</report>\n\n{question or "Give me my action plan."}')
     except errors.ClientError as e:
         if e.code == 429:
             return 503, {'error': 'The AI coach is busy. Try again in a minute.'}
@@ -66,21 +84,51 @@ class Handler(BaseHTTPRequestHandler):
             flat = parse_qs(u.query).get('flat', [''])[0]
             if flat not in D['flats']:
                 return self.send(400, {'error': f'unknown flat {flat!r}'})
-            return self.send(200, analyze.report(D, FS, flat))
+            return self.send(200, report(flat))
         self.send(404, {'error': 'not found'})
 
     def do_POST(self):
-        if urlparse(self.path).path != '/api/coach':
+        path = urlparse(self.path).path
+        if path not in ('/api/coach', '/api/devices'):
             return self.send(404, {'error': 'not found'})
         try:
             n = int(self.headers.get('Content-Length', 0))
             body = json.loads(self.rfile.read(n)) if 0 < n <= 10_000 else None
-            flat, question = str(body['flat']), str(body.get('question', ''))[:500]
+            flat = str(body['flat'])
+            if path == '/api/coach':
+                question = str(body.get('question', ''))[:500]
+            else:
+                dev = {'name': str(body['name']).strip()[:40], 'watts': float(body['watts']),
+                       'hours': float(body['hours'])}
         except (ValueError, KeyError, TypeError):
-            return self.send(400, {'error': 'expected JSON {"flat": "F001", "question": "..."} under 10 kB'})
+            return self.send(400, {'error': 'expected a JSON object under 10 kB with the documented fields'})
         if flat not in D['flats']:
             return self.send(400, {'error': f'unknown flat {flat!r}'})
-        self.send(*coach(flat, question))
+        if path == '/api/coach':
+            return self.send(*coach(flat, question))
+        if not dev['name'] or not 0 < dev['watts'] <= MAX_KWH * 1000 or not 0 < dev['hours'] <= 24:
+            return self.send(400, {'error': 'A device needs a name, up to 4,000 W and up to 24 hours a day.'})
+        with LOCK:
+            devs = saved()
+            if len(devs.get(flat, [])) >= 20:
+                return self.send(400, {'error': 'A flat can have at most 20 added devices.'})
+            devs.setdefault(flat, []).append({'id': uuid.uuid4().hex[:8], **dev})
+            save(devs)
+        self.send(200, report(flat))
+
+    def do_DELETE(self):
+        u = urlparse(self.path)
+        if u.path != '/api/devices':
+            return self.send(404, {'error': 'not found'})
+        q = parse_qs(u.query)
+        flat, dev = q.get('flat', [''])[0], q.get('id', [''])[0]
+        if flat not in D['flats']:
+            return self.send(400, {'error': f'unknown flat {flat!r}'})
+        with LOCK:
+            devs = saved()
+            devs[flat] = [x for x in devs.get(flat, []) if x['id'] != dev]
+            save(devs)
+        self.send(200, report(flat))
 
 
 if __name__ == '__main__':
