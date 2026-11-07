@@ -15,6 +15,7 @@ HEAT_DAYS = 212  # Oct-Apr heating season; October is milder than winter, so sca
 SHIFT_H = 12  # longest delay-start common dishwashers and washers offer
 WARM = 22.0  # degC; heating above this is comfort overshoot (common advice: 20-21 degC)
 MIN_SEK = 20  # hide findings too small to be worth a student's time
+ADOPT = 0.7  # assumed share of the potential students realise (partial follow-through, rebound)
 KEYS = ('kwh', 'sek', 'co2')
 
 
@@ -23,15 +24,16 @@ def kind(app):
 
 
 def rates(d, area):
+    """Mean all-in price (SEK/kWh with grid fee, tax and VAT) and carbon factor (gCO2e/kWh) over the data."""
     ps = d['price'][area].values()
-    return mean(s for s, _ in ps if s is not None), mean(c for _, c in ps if c is not None)
+    return (mean(s for s, _ in ps if s is not None) + GRID + TAX) * VAT, mean(c for _, c in ps if c is not None)
 
 
 def finding(d, app, k, title, detail, action, kwh, sek=None, co2=None):
     flat = app.split('-')[0]
-    spot, carbon = rates(d, d['flats'][flat]['price_area'])
+    price, carbon = rates(d, d['flats'][flat]['price_area'])
     if sek is None:
-        sek = kwh * (spot + GRID + TAX) * VAT
+        sek = kwh * price
     if co2 is None:
         co2 = kwh * carbon / 1000
     return {'flat': flat, 'channel': app, 'type': kind(app), 'kind': k, 'title': title, 'detail': detail,
@@ -159,6 +161,51 @@ def findings(d):
     return sorted(fs, key=lambda f: -f['sek'])
 
 
+
+def annual(d, app):
+    """Yearly kWh from the mean of observed hours; heaters only run in the heating season."""
+    s = d['kwh'][app]
+    return mean(s.values()) * (HEAT_DAYS * 24 if app.endswith('-A07') else YEAR_H) if s else 0
+
+
+def total(fs, n=1):
+    return {k: round(sum(f[k] for f in fs) / n, 1) for k in KEYS}
+
+
+def report(d, fs, flat):
+    f = d['flats'][flat]
+    price, carbon = rates(d, f['price_area'])
+    use = [{'channel': a, 'type': kind(a), 'kwh': round(annual(d, a)), 'sek': round(annual(d, a) * price),
+            'co2': round(annual(d, a) * carbon / 1000, 1),
+            'coverage': round(len(d['kwh'][a]) / len(d['hours']), 3)}
+           for a in sorted(d['kwh']) if a.startswith(flat + '-')]
+    mine = [x for x in fs if x['flat'] == flat]
+    return {'flat': flat, **f, 'channels': use, 'use': total(use), 'findings': mine,
+            'savings': total(mine), 'per_student': total(mine, f['residents'])}
+
+
+def fleet(d, fs):
+    n = sum(f['residents'] for f in d['flats'].values())
+    pot = total(fs, n)
+    return {'residents': n, 'use_kwh': round(sum(annual(d, a) for a in d['kwh']) / n),
+            'coverage': round(1 - d['quality']['missing hours'] / (len(d['kwh']) * len(d['hours'])), 3),
+            'potential': pot, 'expected': {k: round(v * ADOPT, 1) for k, v in pot.items()}}
+
+
 if __name__ == '__main__':
-    for f in findings(load()):
-        print(f"{f['channel']:9} {f['kind']:6} {f['kwh']:5} kWh {f['sek']:5} SEK {f['co2']:5} kg  {f['title']}")
+    d = load()
+    fs = findings(d)
+    print('Data quality (rows repaired or excluded):')
+    for k, v in d['quality'].items():
+        print(f'  {v:5}  {k}')
+    for flat in d['flats']:
+        r = report(d, fs, flat)
+        print(f"\n{flat} ({r['residents']} residents, {r['use']['kwh']:.0f} kWh/yr): "
+              f"save {r['savings']['kwh']:.0f} kWh, {r['savings']['sek']:.0f} SEK, {r['savings']['co2']} kg CO2e per year")
+        for f in r['findings']:
+            print(f"  {f['kind']:9} {f['kwh']:5} kWh {f['sek']:5} SEK {f['co2']:5} kg  {f['title']}")
+    s = fleet(d, fs)
+    print(f"\nPer student per year ({s['residents']} residents, {s['use_kwh']} kWh/yr each, "
+          f"{s['coverage']:.1%} of appliance-hours measured):")
+    for k in ('potential', 'expected'):
+        print(f"  {k:9} {s[k]['kwh']:6} kWh {s[k]['sek']:6} SEK {s[k]['co2']:5} kg CO2e")

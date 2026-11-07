@@ -55,7 +55,8 @@ class TestDetectors(unittest.TestCase):
 class TestDataset(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.fs = analyze.findings(load())
+        cls.d = load()
+        cls.fs = analyze.findings(cls.d)
 
     def test_planted_issues_found(self):
         got = {(f['channel'], f['kind']) for f in self.fs}
@@ -65,6 +66,14 @@ class TestDataset(unittest.TestCase):
 
     def test_no_false_faults(self):
         self.assertEqual([f['channel'] for f in self.fs if f['kind'] == 'fault'], ['F002-A01'])
+
+    def test_summaries(self):
+        s = analyze.fleet(self.d, self.fs)
+        self.assertEqual(s['residents'], 25)
+        self.assertAlmostEqual(s['expected']['sek'], s['potential']['sek'] * analyze.ADOPT, delta=0.1)
+        r = analyze.report(self.d, self.fs, 'F002')
+        self.assertEqual(len(r['channels']), 7)
+        self.assertAlmostEqual(r['per_student']['kwh'], r['savings']['kwh'] / 3, delta=0.1)
 
 
 if __name__ == '__main__':
