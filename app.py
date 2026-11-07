@@ -8,8 +8,10 @@ from google import genai
 from google.genai import errors, types
 
 import analyze
+import envfile
 from clean import load
 
+envfile.load(Path(__file__).parent / '.env')
 D = load()
 FS = analyze.findings(D)
 UI = Path(__file__).parent / 'static' / 'index.html'
@@ -28,7 +30,7 @@ def coach(flat, question):
     try:
         client = genai.Client()
     except ValueError:  # the SDK raises this when GEMINI_API_KEY is not set
-        return 503, {'error': 'The AI coach needs an API key: set GEMINI_API_KEY and restart the app.'}
+        return 503, {'error': 'The AI coach needs an API key: put GEMINI_API_KEY in .env and restart the app.'}
     try:
         resp = client.models.generate_content(
             model='gemini-3.6-flash', config=types.GenerateContentConfig(system_instruction=COACH),

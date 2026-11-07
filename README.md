@@ -8,10 +8,11 @@ Built for the *AI for Energy Saving* hackathon track on the organiser's syntheti
 ```sh
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+cp .env.example .env               # then paste your Gemini API key into .env
 .venv/bin/python app.py            # open http://localhost:8000
 ```
 
-The AI coach uses Gemini (`gemini-3.6-flash`) and needs a [Gemini API key](https://aistudio.google.com/apikey) (`export GEMINI_API_KEY=...` before starting). Without one, everything else works and the coach says it needs a key.
+The AI coach uses Gemini (`gemini-3.6-flash`) and needs a [Gemini API key](https://aistudio.google.com/apikey). `app.py` reads it from `.env`, which git ignores; a real `GEMINI_API_KEY` environment variable takes precedence. Without one, everything else works and the coach says it needs a key.
 
 ```sh
 python3 analyze.py                 # data-quality summary, findings per flat, per-student savings
