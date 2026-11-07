@@ -82,6 +82,14 @@ button:disabled { opacity: .6; cursor: wait; }
   <h2>What to fix first</h2>
   <div id="findings"></div>
 
+  <h2>Ask the AI coach</h2>
+  <form class="card" id="coach">
+    <label for="question">Your question (optional)</label>
+    <textarea id="question" rows="2" maxlength="500" style="width:100%;margin:8px 0" placeholder="e.g. What is the cheapest thing I can do this week?"></textarea>
+    <button type="submit">Get my plan</button>
+    <p id="answer" aria-live="polite" style="white-space:pre-wrap;margin-top:12px"></p>
+  </form>
+
   <h2>Where your electricity goes</h2>
   <div class="card">
     <div id="bars" role="list"></div>
@@ -158,11 +166,28 @@ async function show(flat) {
   }
 }
 
+$('coach').onsubmit = async e => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button');
+  btn.disabled = true;
+  $('answer').textContent = 'Thinking…';
+  try {
+    const r = await fetch('/api/coach', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({flat: $('flat').value, question: $('question').value})});
+    const j = await r.json();
+    $('answer').textContent = j.answer || j.error;
+  } catch (err) {
+    $('answer').textContent = `Could not reach the coach: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+};
+
 async function init() {
   const {flats, fleet, quality} = await get('/api/flats');
   $('flat').replaceChildren(...Object.entries(flats).map(([id, n]) =>
     el('option', {value: id, textContent: `${id} (${n} residents)`})));
-  $('flat').onchange = e => show(e.target.value);
+  $('flat').onchange = e => { $('answer').textContent = ''; show(e.target.value); };
   const fixed = ['duplicate rows removed', 'impossible values dropped', 'missing values (not zero)', 'Wh converted to kWh', 'orphan appliance rows dropped'];
   $('quality').replaceChildren(
     el('p', {textContent: `Synthetic organiser dataset: 8 flats, ${fleet.residents} residents, 4 autumn weeks. ` +
