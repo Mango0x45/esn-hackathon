@@ -60,6 +60,13 @@ class TestDetectors(unittest.TestCase):
         self.assertEqual(top['top'], 'fridge/freezer')
         self.assertFalse(any(r['outlier'] for r in rest))
 
+    def test_added_device(self):
+        d = data({'F001-A01': series(lambda i: 0.05)})
+        r = analyze.report(d, [], 'F001', [{'id': 'x', 'name': 'Gaming PC', 'watts': 100, 'hours': 5}])
+        dev = r['channels'][-1]
+        self.assertEqual((dev['channel'], dev['type'], dev['kwh']), ('added', 'Gaming PC', round(0.1 * 5 * 365)))
+        self.assertEqual(r['use']['kwh'], round(0.05 * 8760) + dev['kwh'])
+
 
 class TestDataset(unittest.TestCase):
     @classmethod

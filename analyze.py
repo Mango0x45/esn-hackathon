@@ -173,13 +173,17 @@ def total(fs, n=1):
     return {k: round(sum(f[k] for f in fs) / n, 1) for k in KEYS}
 
 
-def report(d, fs, flat):
+def report(d, fs, flat, added=()):
     f = d['flats'][flat]
     price, carbon = rates(d, f['price_area'])
     use = [{'channel': a, 'type': kind(a), 'kwh': round(annual(d, a)), 'sek': round(annual(d, a) * price),
             'co2': round(annual(d, a) * carbon / 1000, 1),
             'coverage': round(len(d['kwh'][a]) / len(d['hours']), 3)}
            for a in sorted(d['kwh']) if a.startswith(flat + '-')]
+    for dev in added:  # unmeasured devices residents add by hand: rated watts x hours a day, all year
+        kwh = dev['watts'] / 1000 * dev['hours'] * 365
+        use.append({'channel': 'added', 'id': dev['id'], 'type': dev['name'], 'kwh': round(kwh),
+                    'sek': round(kwh * price), 'co2': round(kwh * carbon / 1000, 1), 'coverage': None})
     mine = [x for x in fs if x['flat'] == flat]
     return {'flat': flat, **f, 'channels': use, 'use': total(use), 'findings': mine,
             'savings': total(mine), 'per_student': total(mine, f['residents'])}
