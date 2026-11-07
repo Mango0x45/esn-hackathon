@@ -51,6 +51,15 @@ class TestDetectors(unittest.TestCase):
         self.assertIn('20:00', f['detail'])
         self.assertIn('02:00', f['action'])
 
+    def test_leaderboard(self):
+        b = analyze.leaderboard(data({'F001-A01': series(lambda i: 0.1), 'F002-A01': series(lambda i: 0.1),
+                                      'F003-A01': series(lambda i: 0.3)}))
+        self.assertEqual(b['median'], 438)
+        top, *rest = b['flats']
+        self.assertEqual((top['flat'], top['per_resident'], top['ratio'], top['outlier']), ('F003', 1314, 3.0, True))
+        self.assertEqual(top['top'], 'fridge/freezer')
+        self.assertFalse(any(r['outlier'] for r in rest))
+
 
 class TestDataset(unittest.TestCase):
     @classmethod

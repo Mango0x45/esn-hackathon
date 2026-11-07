@@ -53,6 +53,9 @@ python3 -m unittest -v             # tests (stdlib only, no key needed)
 
 Findings under 20 SEK/yr are hidden.
 
+### Flat comparison
+Flats are ranked by yearly kWh per resident. A flat at 1.5x the median or more is flagged, together with its biggest circuit (F001: 2.5x, portable heater). The comparison works at flat level only: the data has no per-person readings, and the hackathon rules forbid using other students' personal data without consent.
+
 ### Assumptions
 - **Circuit types are inferred** from load shapes, because the dataset has no appliance lookup. A01 always-on → fridge/freezer, A02 meal-time spikes → cooking, A03 small and sporadic → small kitchen appliances, A04 evening blocks → dishwasher/washer, A05 follows occupancy → lighting & misc, A06 base load + evening peak → electronics, A07 night-heavy and temperature-linked → portable heater.
 - **Price:** (dataset mean spot + 0.312 grid fee + 0.36 energy tax) × 1.25 VAT ≈ 1.44 SEK/kWh. Fixed fees are excluded, because they do not shrink when you save.

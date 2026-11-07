@@ -16,6 +16,7 @@ SHIFT_H = 12  # longest delay-start common dishwashers and washers offer
 WARM = 22.0  # degC; heating above this is comfort overshoot (common advice: 20-21 degC)
 MIN_SEK = 20  # hide findings too small to be worth a student's time
 ADOPT = 0.7  # assumed share of the potential students realise (partial follow-through, rebound)
+OUTLIER = 1.5  # flag flats using this multiple of the median kWh per resident, or more
 KEYS = ('kwh', 'sek', 'co2')
 
 
@@ -192,6 +193,21 @@ def fleet(d, fs):
             'potential': pot, 'expected': {k: round(v * ADOPT, 1) for k, v in pot.items()}}
 
 
+def leaderboard(d):
+    """Flats ranked by yearly kWh per resident, compared with the median flat. Flats, never people."""
+    rows = []
+    for flat, f in d['flats'].items():
+        use = {a: annual(d, a) for a in d['kwh'] if a.startswith(flat + '-')}
+        kwh = sum(use.values())
+        rows.append({'flat': flat, 'residents': f['residents'], 'kwh': round(kwh),
+                     'per_resident': round(kwh / f['residents']), 'top': kind(max(use, key=use.get))})
+    mid = median(r['per_resident'] for r in rows)
+    for r in rows:
+        r['ratio'] = round(r['per_resident'] / mid, 1)
+        r['outlier'] = r['per_resident'] >= OUTLIER * mid
+    return {'median': round(mid), 'threshold': OUTLIER, 'flats': sorted(rows, key=lambda r: -r['per_resident'])}
+
+
 if __name__ == '__main__':
     d = load()
     fs = findings(d)
@@ -209,3 +225,8 @@ if __name__ == '__main__':
           f"{s['coverage']:.1%} of appliance-hours measured):")
     for k in ('potential', 'expected'):
         print(f"  {k:9} {s[k]['kwh']:6} kWh {s[k]['sek']:6} SEK {s[k]['co2']:5} kg CO2e")
+    b = leaderboard(d)
+    print(f"\nFlats by kWh per resident per year (median {b['median']}):")
+    for r in b['flats']:
+        flag = f"  <- {r['ratio']}x median, biggest circuit: {r['top']}" if r['outlier'] else ''
+        print(f"  {r['flat']} {r['per_resident']:5} kWh ({r['residents']} residents){flag}")
