@@ -80,6 +80,17 @@ button:disabled { opacity: .6; cursor: wait; }
 .ev-seg-bar { height: 18px; border-radius: 4px; overflow: hidden; display: flex; background: var(--surface); margin: 6px 0; }
 .ev-seg { height: 100%; min-width: 2px; }
 .ev-chart { width: 100%; height: auto; display: block; overflow: visible; }
+.btn-sm { font-size: 13px; padding: 6px 12px; border-radius: 6px; }
+.btn-secondary { background: var(--surface); border: 1px solid var(--border); color: var(--text); }
+.btn-secondary:hover { background: var(--track); }
+.ticket-row { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 10px; }
+.ticket-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 6px; }
+.ticket-status { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; }
+.ticket-status.open { background: #eaf5ea; color: #1a7f55; border: 1px solid #c2e5c2; }
+.ticket-status.resolved { background: var(--surface); color: var(--text-2); border: 1px solid var(--border); }
+.ticket-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+.report-drawer { margin-top: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+.report-box { font-family: monospace; font-size: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 10px; white-space: pre-wrap; margin: 8px 0; overflow-x: auto; color: var(--text); }
 @media (max-width: 480px) { .bar-row { grid-template-columns: 1fr; gap: 2px; } .hero { font-size: 40px; } }
 </style>
 </head>
@@ -104,6 +115,12 @@ button:disabled { opacity: .6; cursor: wait; }
 
   <h2>What to fix first</h2>
   <div id="findings"></div>
+
+  <h2>Maintenance & fault tickets</h2>
+  <div class="card" id="tickets-card">
+    <div id="tickets" role="list"></div>
+    <p class="muted" id="tickets-empty" style="margin:4px 0">No maintenance tickets filed yet for this flat.</p>
+  </div>
 
   <h2>Ask the AI coach</h2>
   <form class="card" id="coach">
@@ -325,17 +342,195 @@ function evidenceVisual(ev) {
   return box;
 }
 
+function formatDossier(f, notes = '') {
+  const channel = f.channel || 'Unspecified';
+  const appliance = f.type || f.appliance || 'Appliance';
+  const flat = f.flat || $('flat').value;
+  return `[MAINTENANCE REQUEST - UNIT ${flat}]
+Appliance / Circuit: ${appliance} (${channel})
+Issue: ${f.title}
+
+TELEMETRY & EVIDENCE:
+- Analysis: ${f.detail}
+- Annual Waste: ${fmt(f.kwh)} kWh · ${fmt(f.sek)} SEK / year` + (f.co2 ? ` (${f.co2} kg CO2e)` : '') + `
+- Recommended Maintenance: ${f.action}` + (notes ? `\n\nRESIDENT OBSERVATIONS:\n- ${notes}` : '');
+}
+
+async function copyText(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => { btn.textContent = orig; }, 2000);
+  } catch (err) {
+    prompt('Copy to clipboard (Ctrl+C / Cmd+C):', text);
+  }
+}
+
+function toggleReportForm(f, container) {
+  const existing = container.querySelector('.report-drawer');
+  if (existing) {
+    existing.remove();
+    return;
+  }
+  const drawer = el('div', {className: 'report-drawer'});
+  const preview = el('div', {className: 'report-box', textContent: formatDossier(f, '')});
+  const notesInput = el('textarea', {
+    rows: 2,
+    placeholder: "Optional resident observations (e.g. door seal doesn't close tightly, ice buildup inside)...",
+    style: "width:100%;box-sizing:border-box;margin:6px 0;font:inherit;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 8px"
+  });
+  notesInput.oninput = () => {
+    preview.textContent = formatDossier(f, notesInput.value.trim());
+  };
+
+  const copyBtn = el('button', {
+    type: 'button',
+    className: 'btn-secondary btn-sm',
+    textContent: '📋 Copy for Housing Portal',
+    onclick: (e) => copyText(preview.textContent, e.target)
+  });
+  const submitBtn = el('button', {
+    type: 'button',
+    className: 'btn-sm',
+    textContent: '📨 Submit Ticket to Building Management',
+    onclick: () => submitTicket(f, notesInput, drawer)
+  });
+
+  drawer.append(
+    el('p', {style: 'margin:0 0 6px;font-weight:600;font-size:14px', textContent: 'Draft Landlord Maintenance Request'}),
+    notesInput,
+    preview,
+    el('div', {style: 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap'}, copyBtn, submitBtn)
+  );
+  container.append(drawer);
+}
+
+async function submitTicket(f, notesInput, drawer) {
+  const notes = notesInput ? notesInput.value.trim() : '';
+  const body = {
+    flat: f.flat,
+    channel: f.channel,
+    appliance: f.type,
+    title: f.title,
+    detail: f.detail,
+    action: f.action,
+    notes: notes,
+    kwh: f.kwh,
+    sek: f.sek
+  };
+  try {
+    await get('/api/tickets', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    drawer.remove();
+    await loadTickets($('flat').value);
+  } catch (err) {
+    alert(`Could not submit ticket: ${err.message}`);
+  }
+}
+
+async function toggleTicketStatus(id, currentStatus) {
+  const newStatus = currentStatus === 'open' ? 'resolved' : 'open';
+  try {
+    await get('/api/tickets/status', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id, status: newStatus})
+    });
+    await loadTickets($('flat').value);
+  } catch (err) {
+    alert(`Could not update ticket: ${err.message}`);
+  }
+}
+
+async function deleteTicket(id) {
+  if (!confirm('Delete this maintenance ticket?')) return;
+  try {
+    await get(`/api/tickets?id=${encodeURIComponent(id)}`, {method: 'DELETE'});
+    await loadTickets($('flat').value);
+  } catch (err) {
+    alert(`Could not delete ticket: ${err.message}`);
+  }
+}
+
+async function loadTickets(flat) {
+  try {
+    const {tickets} = await get(`/api/tickets?flat=${encodeURIComponent(flat)}`);
+    const list = $('tickets');
+    const emptyMsg = $('tickets-empty');
+    if (!tickets || tickets.length === 0) {
+      list.replaceChildren();
+      emptyMsg.style.display = 'block';
+      emptyMsg.textContent = `No maintenance tickets filed yet for flat ${flat}.`;
+      return;
+    }
+    emptyMsg.style.display = 'none';
+    list.replaceChildren(...tickets.map(t => {
+      const isResolved = t.status === 'resolved';
+      const dossier = formatDossier(t, t.notes);
+      return el('div', {className: 'ticket-row', role: 'listitem'},
+        el('div', {className: 'ticket-top'},
+          el('div', {},
+            el('b', {textContent: `#${t.id}`}),
+            el('span', {className: 'muted', style: 'margin-left:8px', textContent: `${t.created_at || ''} · ${t.flat} (${t.appliance})`})),
+          el('span', {className: `ticket-status ${t.status}`, textContent: t.status.toUpperCase()})),
+        el('h3', {style: 'margin:4px 0', textContent: t.title}),
+        el('p', {className: 'muted', style: 'font-size:13px', textContent: t.detail}),
+        ...(t.notes ? [el('p', {style: 'font-size:13px;margin:4px 0'}, el('b', {textContent: 'Resident observations: '}), t.notes)] : []),
+        el('p', {className: 'nums', style: 'font-size:13px', textContent: `Impact: ${fmt(t.kwh)} kWh · ${fmt(t.sek)} SEK / year`}),
+        el('div', {className: 'ticket-actions'},
+          el('button', {
+            type: 'button',
+            className: 'btn-sm ' + (isResolved ? 'btn-secondary' : ''),
+            textContent: isResolved ? '↺ Reopen Ticket' : '✓ Mark Resolved',
+            onclick: () => toggleTicketStatus(t.id, t.status)
+          }),
+          el('button', {
+            type: 'button',
+            className: 'btn-secondary btn-sm',
+            textContent: '📋 Copy Landlord Report',
+            onclick: (e) => copyText(dossier, e.target)
+          }),
+          el('button', {
+            type: 'button',
+            className: 'remove',
+            textContent: 'Delete',
+            onclick: () => deleteTicket(t.id)
+          })
+        )
+      );
+    }));
+  } catch (err) {
+    console.error('Could not load tickets:', err);
+  }
+}
+
 function findings(r) {
-  $('findings').replaceChildren(...r.findings.map(f => el('div', {className: 'card'},
-    el('span', {className: 'badge', textContent: KIND[f.kind] || f.kind}),
-    el('span', {className: 'badge', textContent: `inferred: ${f.type}`}),
-    el('h3', {textContent: f.title}),
-    el('p', {textContent: f.detail}),
-    ...(f.evidence ? [evidenceVisual(f.evidence)] : []),
-    el('p', {className: 'todo', textContent: f.action}),
-    el('p', {className: 'nums', textContent: f.kwh
-      ? `Saves ${fmt(f.kwh)} kWh · ${fmt(f.sek)} SEK · ${f.co2.toFixed(1)} kg CO₂e per year`
-      : `Same energy, saves ${fmt(f.sek)} SEK · ${f.co2.toFixed(1)} kg CO₂e per year`}))));
+  $('findings').replaceChildren(...r.findings.map(f => {
+    const card = el('div', {className: 'card'});
+    const reportBtn = el('button', {
+      type: 'button',
+      className: 'btn-secondary btn-sm',
+      textContent: '🛠️ Report Fault to Landlord',
+      onclick: () => toggleReportForm(f, card)
+    });
+    card.append(
+      el('span', {className: 'badge', textContent: KIND[f.kind] || f.kind}),
+      el('span', {className: 'badge', textContent: `inferred: ${f.type}`}),
+      el('h3', {textContent: f.title}),
+      el('p', {textContent: f.detail}),
+      ...(f.evidence ? [evidenceVisual(f.evidence)] : []),
+      el('p', {className: 'todo', textContent: f.action}),
+      el('p', {className: 'nums', textContent: f.kwh
+        ? `Saves ${fmt(f.kwh)} kWh · ${fmt(f.sek)} SEK · ${f.co2.toFixed(1)} kg CO₂e per year`
+        : `Same energy, saves ${fmt(f.sek)} SEK · ${f.co2.toFixed(1)} kg CO₂e per year`}),
+      el('div', {style: 'margin-top:12px;display:flex;gap:8px'}, reportBtn)
+    );
+    return card;
+  }));
 }
 
 function bars(r) {
@@ -409,6 +604,7 @@ function compare(flat) {
 
 async function show(flat) {
   compare(flat);
+  loadTickets(flat);
   try {
     const r = await get(`/api/report?flat=${encodeURIComponent(flat)}`);
     render(r);

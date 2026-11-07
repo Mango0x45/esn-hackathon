@@ -3,4 +3,5 @@ __pycache__/
 .env
 devices.json
 flats.json
+tickets.json
 *.tmp
