@@ -155,9 +155,37 @@ def shift(d):
     return out
 
 
+def away(d, skip=()):
+    """Lighting or equipment left on when nobody is home (occupants_home == 0)."""
+    out = []
+    for app, s in d['kwh'].items():
+        if app in skip or not s or not (app.endswith('-A05') or app.endswith('-A06')):
+            continue
+        flat = app.split('-')[0]
+        empty = [(ts, v) for ts, v in s.items() if d['ctx'].get((flat, ts), {}).get('occ') == 0]
+        if not empty:
+            continue
+        standby = min(v for _, v in empty)
+        waste = [(ts, v) for ts, v in empty if v > standby + 0.01]
+        if not waste:
+            continue
+        waste_kwh = sum(v - standby for _, v in waste)
+        avg_draw = mean(v for _, v in waste)
+        out.append(finding(
+            d, app, 'away', f'Your {kind(app)} is left on while everyone is out ({len(waste)} hours)',
+            f'In {len(waste)} hours when nobody was home, this circuit drew {avg_draw * 1000:.0f} W '
+            f'instead of its {standby * 1000:.0f} W empty baseline. Over 4 weeks, that is {waste_kwh:.1f} kWh '
+            f'wasted on an empty flat.',
+            'Switch off lights and electronics when leaving the flat. '
+            'Consider an entryway reminder note or smart power strips.',
+            waste_kwh / len(s) * YEAR_H))
+    return out
+
+
 def findings(d):
     fs = faults(d)
-    fs += baseload(d, skip={f['channel'] for f in fs}) + heater(d) + shift(d)
+    fs += baseload(d, skip={f['channel'] for f in fs})
+    fs += away(d, skip={f['channel'] for f in fs}) + heater(d) + shift(d)
     fs = [f for f in fs if f['sek'] >= MIN_SEK]
     return sorted(fs, key=lambda f: -f['sek'])
 
