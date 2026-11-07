@@ -69,6 +69,17 @@ button:disabled { opacity: .6; cursor: wait; }
 #dev-name { flex-basis: 100%; }
 .remove { background: none; border: 0; color: var(--text-2); padding: 0 6px; font-weight: 400; }
 .bar-val { position: absolute; top: -2px; font-size: 13px; color: var(--text-2); white-space: nowrap; padding-left: 6px; }
+.ev-box { background: var(--track); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin: 12px 0 8px; }
+.ev-header { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-2); margin-bottom: 8px; }
+.ev-stats { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 10px; font-size: 13px; }
+.ev-stat { display: flex; flex-direction: column; }
+.ev-stat span { font-size: 11px; color: var(--text-2); }
+.ev-stat b { font-size: 14px; color: var(--text); }
+.ev-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12px; color: var(--text-2); }
+.ev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+.ev-seg-bar { height: 18px; border-radius: 4px; overflow: hidden; display: flex; background: var(--surface); margin: 6px 0; }
+.ev-seg { height: 100%; min-width: 2px; }
+.ev-chart { width: 100%; height: auto; display: block; overflow: visible; }
 @media (max-width: 480px) { .bar-row { grid-template-columns: 1fr; gap: 2px; } .hero { font-size: 40px; } }
 </style>
 </head>
@@ -128,7 +139,7 @@ button:disabled { opacity: .6; cursor: wait; }
 <script>
 const fmt = n => Math.round(n).toLocaleString('en');
 const $ = id => document.getElementById(id);
-const KIND = {fault: 'Faulty appliance', 'always-on': 'Always on', heating: 'Heating', timing: 'Timing'};
+const KIND = {fault: 'Faulty appliance', 'always-on': 'Always on', heating: 'Heating', timing: 'Timing', away: 'Away'};
 
 function el(tag, props = {}, ...kids) {
   const e = Object.assign(document.createElement(tag), props);
@@ -163,12 +174,164 @@ function summary(r) {
     : el('p', {textContent: 'No significant waste found in this flat. Nice work.'}));
 }
 
+function evidenceVisual(ev) {
+  if (!ev) return el('div');
+  const box = el('div', {className: 'ev-box'});
+
+  if (ev.type === 'timeseries') {
+    const max = Math.max(...ev.series.map(s => s.watts), ev.now_w * 1.1, 10);
+    const n = ev.series.length;
+    const barW = Math.max(1, (540 / n) - 2);
+    const yBase = 65 - (ev.base_w / max) * 55;
+    const pctJump = Math.round((ev.now_w - ev.base_w) / Math.max(ev.base_w, 1) * 100);
+
+    const barsSvg = ev.series.map((s, i) => {
+      const isFault = s.day >= ev.fault_day;
+      const h = Math.max(2, (s.watts / max) * 55);
+      const x = i * (540 / n);
+      const y = 65 - h;
+      const color = isFault ? '#d9534f' : 'var(--bar)';
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${color}" rx="1"><title>${s.day}: ${s.watts} W${isFault ? ' (fault)' : ''}</title></rect>`;
+    }).join('');
+
+    box.innerHTML = `
+      <div class="ev-header">${ev.label || 'Daily median power'}</div>
+      <div class="ev-stats">
+        <div class="ev-stat"><span>Baseline</span><b>${ev.base_w} W</b></div>
+        <div class="ev-stat"><span>Fault draw</span><b>${ev.now_w} W (+${pctJump}%)</b></div>
+        <div class="ev-stat"><span>Detected</span><b>${ev.fault_day}</b></div>
+      </div>
+      <svg class="ev-chart" viewBox="0 0 540 70">
+        <line x1="0" y1="${yBase.toFixed(1)}" x2="540" y2="${yBase.toFixed(1)}" stroke="var(--text-2)" stroke-dasharray="3,3" opacity="0.6"/>
+        ${barsSvg}
+      </svg>
+      <div class="ev-legend">
+        <span><span class="ev-dot" style="background:var(--bar)"></span>Normal (< ${ev.fault_day})</span>
+        <span><span class="ev-dot" style="background:#d9534f"></span>Faulted (≥ ${ev.fault_day})</span>
+        <span><span class="ev-dot" style="background:var(--text-2)"></span>Baseline (${ev.base_w} W)</span>
+      </div>
+    `;
+  } else if (ev.type === 'profile_24h') {
+    const max = Math.max(...ev.flat_w, ...ev.peer_w, 10) * 1.1;
+    const ratio = (ev.flat_w[1] / Math.max(ev.peer_w[1], 1)).toFixed(1);
+    const barsSvg = ev.hours.map(h => {
+      const isNight = h >= ev.night_window[0] && h <= ev.night_window[1];
+      const hPeer = Math.max(1, (ev.peer_w[h] / max) * 55);
+      const hFlat = Math.max(1, (ev.flat_w[h] / max) * 55);
+      const xPeer = h * 22.5 + 1;
+      const xFlat = h * 22.5 + 10;
+      const flatColor = isNight ? '#d9534f' : 'var(--bar)';
+      return `
+        <rect x="${xPeer.toFixed(1)}" y="${(65 - hPeer).toFixed(1)}" width="8" height="${hPeer.toFixed(1)}" fill="var(--border)" rx="1"><title>${h}:00 Peer median: ${ev.peer_w[h]} W</title></rect>
+        <rect x="${xFlat.toFixed(1)}" y="${(65 - hFlat).toFixed(1)}" width="8" height="${hFlat.toFixed(1)}" fill="${flatColor}" rx="1"><title>${h}:00 Your flat: ${ev.flat_w[h]} W</title></rect>
+      `;
+    }).join('');
+
+    box.innerHTML = `
+      <div class="ev-header">${ev.label || '24-hour load curve'}</div>
+      <div class="ev-stats">
+        <div class="ev-stat"><span>Overnight draw (01–05)</span><b>${ev.flat_w[1]} W</b></div>
+        <div class="ev-stat"><span>Peer flats draw</span><b>${ev.peer_w[1]} W</b></div>
+        <div class="ev-stat"><span>Draw ratio</span><b>${ratio}x peer median</b></div>
+      </div>
+      <svg class="ev-chart" viewBox="0 0 540 70">
+        <rect x="${(ev.night_window[0] * 22.5).toFixed(1)}" y="0" width="${((ev.night_window[1] - ev.night_window[0] + 1) * 22.5).toFixed(1)}" height="68" fill="var(--surface)" opacity="0.6"/>
+        ${barsSvg}
+      </svg>
+      <div class="ev-legend">
+        <span><span class="ev-dot" style="background:#d9534f"></span>Your flat (night 01–05)</span>
+        <span><span class="ev-dot" style="background:var(--bar)"></span>Your flat (day)</span>
+        <span><span class="ev-dot" style="background:var(--border)"></span>Peer median</span>
+      </div>
+    `;
+  } else if (ev.type === 'breakdown') {
+    const tot = Math.max(1, ev.useful_kwh + ev.warm_kwh + ev.empty_kwh);
+    const pctUseful = Math.round(ev.useful_kwh / tot * 100);
+    const pctWarm = Math.round(ev.warm_kwh / tot * 100);
+    const pctEmpty = Math.round(ev.empty_kwh / tot * 100);
+
+    box.innerHTML = `
+      <div class="ev-header">${ev.label || 'Observed heater energy'}</div>
+      <div class="ev-stats">
+        <div class="ev-stat"><span>Useful heating</span><b>${fmt(ev.useful_kwh)} kWh (${pctUseful}%)</b></div>
+        <div class="ev-stat"><span>Room warm (≥ 22 °C)</span><b>${fmt(ev.warm_kwh)} kWh (${pctWarm}%)</b></div>
+        <div class="ev-stat"><span>Nobody home</span><b>${fmt(ev.empty_kwh)} kWh (${pctEmpty}%)</b></div>
+      </div>
+      <div class="ev-seg-bar">
+        <div class="ev-seg" style="width:${pctUseful}%;background:var(--accent)" title="Useful: ${fmt(ev.useful_kwh)} kWh"></div>
+        <div class="ev-seg" style="width:${pctWarm}%;background:#e67e22" title="Room ≥ 22 °C: ${fmt(ev.warm_kwh)} kWh"></div>
+        <div class="ev-seg" style="width:${pctEmpty}%;background:#d9534f" title="Nobody home: ${fmt(ev.empty_kwh)} kWh"></div>
+      </div>
+      <div class="ev-legend">
+        <span><span class="ev-dot" style="background:var(--accent)"></span>Useful (${pctUseful}%)</span>
+        <span><span class="ev-dot" style="background:#e67e22"></span>Room ≥ 22 °C (${pctWarm}%)</span>
+        <span><span class="ev-dot" style="background:#d9534f"></span>Nobody home (${pctEmpty}%)</span>
+      </div>
+    `;
+  } else if (ev.type === 'price_profile') {
+    const max = Math.max(...ev.prices, 0.5) * 1.15;
+    const pRun = ev.prices[ev.run_h] || 0;
+    const pShift = ev.prices[ev.shift_h] || 0;
+    const pDrop = Math.round((1 - pShift / Math.max(pRun, 0.01)) * 100);
+
+    const barsSvg = ev.hours.map(h => {
+      const p = ev.prices[h] || 0;
+      const barH = Math.max(2, (p / max) * 55);
+      const x = h * 22.5 + 2;
+      const y = 65 - barH;
+      const color = h === ev.run_h ? '#d9534f' : (h === ev.shift_h ? 'var(--accent)' : 'var(--border)');
+      return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="17" height="${barH.toFixed(1)}" fill="${color}" rx="1"><title>${h}:00 - ${p.toFixed(2)} SEK/kWh</title></rect>`;
+    }).join('');
+
+    box.innerHTML = `
+      <div class="ev-header">${ev.label || 'Spot price by hour'}</div>
+      <div class="ev-stats">
+        <div class="ev-stat"><span>Current run time</span><b>${String(ev.run_h).padStart(2, '0')}:00 (${pRun.toFixed(2)} SEK)</b></div>
+        <div class="ev-stat"><span>Cheapest target</span><b>${String(ev.shift_h).padStart(2, '0')}:00 (${pShift.toFixed(2)} SEK)</b></div>
+        <div class="ev-stat"><span>Price drop</span><b>-${pDrop}%</b></div>
+      </div>
+      <svg class="ev-chart" viewBox="0 0 540 70">
+        ${barsSvg}
+      </svg>
+      <div class="ev-legend">
+        <span><span class="ev-dot" style="background:#d9534f"></span>Usual run (${String(ev.run_h).padStart(2, '0')}:00)</span>
+        <span><span class="ev-dot" style="background:var(--accent)"></span>Cheapest hour (${String(ev.shift_h).padStart(2, '0')}:00)</span>
+        <span><span class="ev-dot" style="background:var(--border)"></span>Other hours</span>
+      </div>
+    `;
+  } else if (ev.type === 'away_stats') {
+    const totH = Math.max(1, ev.normal_hours + ev.waste_hours);
+    const pctWaste = Math.round(ev.waste_hours / totH * 100);
+    const pctNormal = 100 - pctWaste;
+    const ratio = (ev.waste_w / Math.max(ev.standby_w, 1)).toFixed(0);
+
+    box.innerHTML = `
+      <div class="ev-header">${ev.label || 'Unoccupied hours consumption'}</div>
+      <div class="ev-stats">
+        <div class="ev-stat"><span>Empty baseline</span><b>${ev.standby_w} W</b></div>
+        <div class="ev-stat"><span>Left on draw</span><b>${ev.waste_w} W (${ratio}x baseline)</b></div>
+        <div class="ev-stat"><span>Wasted empty time</span><b>${ev.waste_hours} h (${pctWaste}%)</b></div>
+      </div>
+      <div class="ev-seg-bar">
+        <div class="ev-seg" style="width:${pctNormal}%;background:var(--accent)" title="Normal empty baseline: ${ev.normal_hours} h"></div>
+        <div class="ev-seg" style="width:${pctWaste}%;background:#d9534f" title="Left on: ${ev.waste_hours} h"></div>
+      </div>
+      <div class="ev-legend">
+        <span><span class="ev-dot" style="background:var(--accent)"></span>Normal unoccupied (${ev.normal_hours} h · ${ev.standby_w} W)</span>
+        <span><span class="ev-dot" style="background:#d9534f"></span>Left on while empty (${ev.waste_hours} h · ${ev.waste_w} W)</span>
+      </div>
+    `;
+  }
+  return box;
+}
+
 function findings(r) {
   $('findings').replaceChildren(...r.findings.map(f => el('div', {className: 'card'},
     el('span', {className: 'badge', textContent: KIND[f.kind] || f.kind}),
     el('span', {className: 'badge', textContent: `inferred: ${f.type}`}),
     el('h3', {textContent: f.title}),
     el('p', {textContent: f.detail}),
+    ...(f.evidence ? [evidenceVisual(f.evidence)] : []),
     el('p', {className: 'todo', textContent: f.action}),
     el('p', {className: 'nums', textContent: f.kwh
       ? `Saves ${fmt(f.kwh)} kWh · ${fmt(f.sek)} SEK · ${f.co2.toFixed(1)} kg CO₂e per year`
@@ -178,18 +341,21 @@ function findings(r) {
 function bars(r) {
   const cs = [...r.channels].sort((a, b) => b.kwh - a.kwh);
   const max = Math.max(...cs.map(c => c.kwh), 1);
+  const total = r.use && r.use.kwh > 0 ? r.use.kwh : cs.reduce((s, c) => s + c.kwh, 0);
   $('bars').replaceChildren(...cs.map(c => {
     const added = c.channel === 'added';
-    const tip = `${c.type}: ${fmt(c.kwh)} kWh, ${fmt(c.sek)} SEK per year, ` +
+    const pctVal = total > 0 ? (c.kwh / total * 100) : 0;
+    const pct = pctVal > 0 && pctVal < 1 ? pctVal.toFixed(1) : Math.round(pctVal);
+    const tip = `${c.type}: ${fmt(c.kwh)} kWh (${pct}%), ${fmt(c.sek)} SEK per year, ` +
       (added ? 'added by hand (watts × hours a day)' : `${Math.round(c.coverage * 100)}% of hours measured`);
-    const w = c.kwh / max * 75;
+    const w = c.kwh / max * 68;
     return el('div', {className: 'bar-row', role: 'listitem', title: tip, ariaLabel: tip},
       el('span', {}, added ? `${c.type} (added)` : c.type,
         ...(added ? [el('button', {type: 'button', className: 'remove', textContent: '×',
           ariaLabel: `Remove ${c.type}`, onclick: () => remove(c.id)})] : [])),
       el('div', {className: 'track'},
         el('div', {className: 'bar', style: `width:${w}%`}),
-        el('span', {className: 'bar-val', style: `left:${w}%`, textContent: `${fmt(c.kwh)} kWh`})));
+        el('span', {className: 'bar-val', style: `left:${w}%`, textContent: `${fmt(c.kwh)} kWh (${pct}%)`})));
   }));
 }
 
