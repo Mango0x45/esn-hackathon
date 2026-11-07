@@ -25,7 +25,7 @@ python3 -m unittest -v             # tests (stdlib only, no key needed)
 |---|---|
 | `clean.py` | Loads the four CSVs and repairs every defect it finds, counting each repair |
 | `analyze.py` | Five waste detectors, then pricing and annualising of each finding |
-| `app.py` | Local web server: `/api/flats`, `/api/report?flat=F001`, `POST /api/coach`, `POST`/`DELETE /api/devices`, `POST /api/flats` |
+| `app.py` | Local web server: `/api/flats`, `/api/report?flat=F001`, `POST /api/coach`, `POST`/`DELETE /api/devices`, `POST /api/flats`, `/api/tickets` |
 | `static/index.html` | The student-facing page |
 
 ### Data cleaning
@@ -59,6 +59,9 @@ Residents can add a device the meters don't cover (name, watts, hours a day). It
 
 ### Added flats
 New flats can be created with their residents and floor area. They get the next free ID (F009, F010, ...) and are stored in `flats.json`, which git ignores. They have no meter data, so the detectors can't scan them: they hold hand-added devices only. They are left out of the per-student savings figures and the flat ranking. Prices use SE3, the only area in the dataset.
+
+### Landlord fault report system
+When an equipment failure or waste issue is flagged (such as the F002 broken fridge), students can click **"File Landlord Fault Report"** on any finding card. This generates a pre-formatted technical dossier detailing baseline vs. surge power, estimated annual waste in SEK and kWh, and suspected root causes (e.g. door seal gasket failure, frost buildup, compressor relay). Students can add personal observations, copy the dossier for external housing portals (SSSB, AF Bostäder), or submit it directly as a maintenance ticket tracked under **"Maintenance & fault tickets"** with open/resolved status management. Tickets are stored atomically in `tickets.json`, which git ignores.
 
 ### Flat comparison
 Flats are ranked by yearly kWh per resident. A flat at 1.5x the median or more is flagged, together with its biggest circuit (F001: 2.5x, portable heater). The comparison works at flat level only: the data has no per-person readings, and the hackathon rules forbid using other students' personal data without consent.
