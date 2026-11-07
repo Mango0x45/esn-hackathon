@@ -25,7 +25,7 @@ python3 -m unittest -v             # tests (stdlib only, no key needed)
 |---|---|
 | `clean.py` | Loads the four CSVs and repairs every defect it finds, counting each repair |
 | `analyze.py` | Four waste detectors, then pricing and annualising of each finding |
-| `app.py` | Local web server: `/api/flats`, `/api/report?flat=F001`, `POST /api/coach`, `POST`/`DELETE /api/devices` |
+| `app.py` | Local web server: `/api/flats`, `/api/report?flat=F001`, `POST /api/coach`, `POST`/`DELETE /api/devices`, `POST /api/flats` |
 | `static/index.html` | The student-facing page |
 
 ### Data cleaning
@@ -55,6 +55,9 @@ Findings under 20 SEK/yr are hidden.
 
 ### Added devices
 Residents can add a device the meters don't cover (name, watts, hours a day). It shows up as an extra bar with yearly kWh, SEK and CO₂e, counts toward the flat's total, and the AI coach sees it. Devices are stored per flat in `devices.json`, which git ignores.
+
+### Added flats
+New flats can be created with their residents and floor area. They get the next free ID (F009, F010, ...) and are stored in `flats.json`, which git ignores. They have no meter data, so the detectors can't scan them: they hold hand-added devices only. They are left out of the per-student savings figures and the flat ranking. Prices use SE3, the only area in the dataset.
 
 ### Flat comparison
 Flats are ranked by yearly kWh per resident. A flat at 1.5x the median or more is flagged, together with its biggest circuit (F001: 2.5x, portable heater). The comparison works at flat level only: the data has no per-person readings, and the hackathon rules forbid using other students' personal data without consent.
