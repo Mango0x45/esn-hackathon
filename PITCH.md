@@ -13,17 +13,17 @@ WasteWatt reads a flat's per-circuit electricity data, finds the waste a student
 2. `F005`: an electronics circuit draws 128 W all night, 3.9x similar flats. Something is left on.
 3. `F007`: 95 % of the heater's energy goes into a room that is already at 22 °C or more.
 4. Every flat: delay-start the dishwasher/washer from 20:00 to the cheapest hour (same energy, lower price).
-5. "Get my plan": Claude turns the flat's report into at most 5 steps, biggest saving first.
+5. "Get my plan": Gemini turns the flat's report into at most 5 steps, biggest saving first.
 
 ## Where the AI is
 - **Anomaly detection without labels.** The dataset has no appliance types. WasteWatt infers them from load shapes, finds lasting level shifts (faults), compares each circuit with the same circuit in similar flats (peer baseline), and checks heater use against indoor temperature and occupancy.
 - **A trust layer before the maths.** Cleaning fixes about 1,100 defects in 37,715 readings: duplicates, Wh/kWh mixing, comma decimals, impossible values and orphan IDs. Missing data stays missing; it is never counted as zero.
-- **Claude coach** (`claude-opus-5-5`). It explains the findings in plain language and answers free questions. It may use only the report's numbers.
+- **Gemini coach** (`gemini-3.6-flash`). It explains the findings in plain language and answers free questions. It may use only the report's numbers.
 
 ## Business model
 - **Customer:** student-housing landlords, often with electricity included in the rent (for example SSSB, AF Bostäder). They pay the bill and own the broken fridge, so a fault alert saves them money directly.
 - **Price:** 10 SEK per flat per month (120 SEK/yr). Expected saving is about 590 SEK per flat per year (190 SEK × 25 students / 8 flats), so the customer saves roughly 5x what they pay.
-- **Cost to serve:** the analysis is plain Python. One coach answer is a few thousand tokens, well under 1 SEK at Opus 5.5 list prices ($4 / $20 per million input/output tokens).
+- **Cost to serve:** the analysis is plain Python. One coach answer is a few thousand tokens, well under 1 SEK at Gemini 3.6 Flash list prices ($1.50 / $7.50 per million input/output tokens from 2027, half that until then).
 - **Later:** smart plugs for automatic night-off, and landlord dashboards for fault tickets.
 
 ## Savings slide: per student per year

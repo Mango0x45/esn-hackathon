@@ -4,7 +4,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-import anthropic
+from google import genai
+from google.genai import errors, types
 
 import analyze
 from clean import load
@@ -25,24 +26,20 @@ each with yearly kWh, SEK and kg CO2e savings and a suggested action.
 def coach(flat, question):
     report = json.dumps(analyze.report(D, FS, flat))
     try:
-        msg = anthropic.Anthropic().beta.messages.create(
-            model='claude-opus-5-5', max_tokens=16000, system=COACH,
-            betas=['server-side-fallback-2026-07-01'], fallbacks='default',
-            output_config={'effort': 'low'},
-            messages=[{'role': 'user', 'content': f'<report>{report}</report>\n\n{question or "Give me my action plan."}'}])
-    except TypeError as e:  # the SDK raises this when no API key or `ant auth login` profile is configured
-        if 'authentication' not in str(e):
-            raise
-        return 503, {'error': 'The AI coach needs an API key: set ANTHROPIC_API_KEY and restart the app.'}
-    except anthropic.AuthenticationError:
-        return 503, {'error': 'The API key was rejected. Check ANTHROPIC_API_KEY.'}
-    except anthropic.RateLimitError:
-        return 503, {'error': 'The AI coach is busy. Try again in a minute.'}
-    except anthropic.APIError as e:
-        return 502, {'error': f'The AI coach is unavailable right now ({type(e).__name__}).'}
-    if msg.stop_reason == 'refusal':
-        return 200, {'answer': "The coach can't help with that. Ask about your flat's energy use."}
-    return 200, {'answer': ''.join(b.text for b in msg.content if b.type == 'text')}
+        client = genai.Client()
+    except ValueError:  # the SDK raises this when GEMINI_API_KEY is not set
+        return 503, {'error': 'The AI coach needs an API key: set GEMINI_API_KEY and restart the app.'}
+    try:
+        resp = client.models.generate_content(
+            model='gemini-3.6-flash', config=types.GenerateContentConfig(system_instruction=COACH),
+            contents=f'<report>{report}</report>\n\n{question or "Give me my action plan."}')
+    except errors.ClientError as e:
+        if e.code == 429:
+            return 503, {'error': 'The AI coach is busy. Try again in a minute.'}
+        return 503, {'error': f'Gemini rejected the request: {e.message}'}
+    except errors.APIError as e:
+        return 502, {'error': f'The AI coach is unavailable right now ({e.code}).'}
+    return 200, {'answer': resp.text or "The coach can't help with that. Ask about your flat's energy use."}
 
 
 class Handler(BaseHTTPRequestHandler):

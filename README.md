@@ -11,7 +11,7 @@ python3 -m venv .venv
 .venv/bin/python app.py            # open http://localhost:8000
 ```
 
-The AI coach needs an Anthropic API key (`export ANTHROPIC_API_KEY=...` before starting). Without one, everything else works and the coach says it needs a key.
+The AI coach uses Gemini (`gemini-3.6-flash`) and needs a [Gemini API key](https://aistudio.google.com/apikey) (`export GEMINI_API_KEY=...` before starting). Without one, everything else works and the coach says it needs a key.
 
 ```sh
 python3 analyze.py                 # data-quality summary, findings per flat, per-student savings
