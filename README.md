@@ -24,7 +24,7 @@ python3 -m unittest -v             # tests (stdlib only, no key needed)
 | File | Job |
 |---|---|
 | `clean.py` | Loads the four CSVs and repairs every defect it finds, counting each repair |
-| `analyze.py` | Four waste detectors, then pricing and annualising of each finding |
+| `analyze.py` | Five waste detectors, then pricing and annualising of each finding |
 | `app.py` | Local web server: `/api/flats`, `/api/report?flat=F001`, `POST /api/coach`, `POST`/`DELETE /api/devices`, `POST /api/flats` |
 | `static/index.html` | The student-facing page |
 
@@ -50,6 +50,7 @@ python3 -m unittest -v             # tests (stdlib only, no key needed)
 2. **Always-on:** overnight (01–05 local) draw >2x the same circuit's median across all flats (and >30 W more). Finds F005's electronics.
 3. **Heating:** portable-heater energy in hours with indoor ≥ 22 °C or nobody home. Finds F007.
 4. **Timing:** each dishwasher/washer hour moves to the cheapest hour in the next 12 h. Only SEK changes; CO₂e uses the destination hour's carbon factor.
+5. **Away:** lighting/electronics circuit consuming power significantly above its unoccupied baseline during hours when nobody is home (`occupants_home == 0`). Finds F004 leaving lights on.
 
 Findings under 20 SEK/yr are hidden.
 
