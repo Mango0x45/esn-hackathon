@@ -49,7 +49,7 @@ p { margin: 0 0 8px; }
 .muted { color: var(--text-2); font-size: 14px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
 label { font-weight: 600; margin-right: 8px; }
-select, button, textarea { font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
+select, button, textarea, input { font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; }
 button { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
 button:disabled { opacity: .6; cursor: wait; }
 .hero { font-size: 48px; font-weight: 700; line-height: 1.1; }
@@ -64,6 +64,10 @@ button:disabled { opacity: .6; cursor: wait; }
 .track { position: relative; height: 16px; }
 .bar { height: 16px; background: var(--bar); border-radius: 0 4px 4px 0; min-width: 2px; }
 .me { font-weight: 700; }
+.add { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.add input { flex: 1 1 7rem; min-width: 0; }
+#dev-name { flex-basis: 100%; }
+.remove { background: none; border: 0; color: var(--text-2); padding: 0 6px; font-weight: 400; }
 .bar-val { position: absolute; top: -2px; font-size: 13px; color: var(--text-2); white-space: nowrap; padding-left: 6px; }
 @media (max-width: 480px) { .bar-row { grid-template-columns: 1fr; gap: 2px; } .hero { font-size: 40px; } }
 </style>
@@ -94,7 +98,15 @@ button:disabled { opacity: .6; cursor: wait; }
   <h2>Where your electricity goes</h2>
   <div class="card">
     <div id="bars" role="list"></div>
-    <p class="muted" style="margin-top:12px">Estimated kWh per year. The dataset has no appliance labels, so types are inferred from each circuit's load pattern.</p>
+    <p class="muted" style="margin-top:12px">Estimated kWh per year. The dataset has no appliance labels, so circuit types are inferred from their load patterns. Added devices are estimated from watts × hours a day.</p>
+    <p style="margin-top:16px"><b>Add a device that isn't measured</b></p>
+    <form class="add" id="add">
+      <input id="dev-name" maxlength="40" required placeholder="Device, e.g. gaming PC" aria-label="Device name">
+      <input id="dev-watts" type="number" min="1" max="4000" required placeholder="Watts" aria-label="Power in watts">
+      <input id="dev-hours" type="number" min="0.1" max="24" step="0.1" required placeholder="Hours a day" aria-label="Hours used per day">
+      <button type="submit">Add device</button>
+    </form>
+    <p class="muted" id="add-msg" aria-live="polite"></p>
   </div>
 
   <h2>How your flat compares</h2>
@@ -117,8 +129,8 @@ function el(tag, props = {}, ...kids) {
   return e;
 }
 
-async function get(url) {
-  const r = await fetch(url);
+async function get(url, opts) {
+  const r = await fetch(url, opts);
   const j = await r.json();
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
@@ -154,14 +166,44 @@ function bars(r) {
   const cs = [...r.channels].sort((a, b) => b.kwh - a.kwh);
   const max = Math.max(...cs.map(c => c.kwh), 1);
   $('bars').replaceChildren(...cs.map(c => {
-    const tip = `${c.type} (${c.channel}): ${fmt(c.kwh)} kWh, ${fmt(c.sek)} SEK per year, ${Math.round(c.coverage * 100)}% of hours measured`;
+    const added = c.channel === 'added';
+    const tip = `${c.type}: ${fmt(c.kwh)} kWh, ${fmt(c.sek)} SEK per year, ` +
+      (added ? 'added by hand (watts × hours a day)' : `${Math.round(c.coverage * 100)}% of hours measured`);
     const w = c.kwh / max * 75;
     return el('div', {className: 'bar-row', role: 'listitem', title: tip, ariaLabel: tip},
-      el('span', {textContent: c.type}),
+      el('span', {}, added ? `${c.type} (added)` : c.type,
+        ...(added ? [el('button', {type: 'button', className: 'remove', textContent: '×',
+          ariaLabel: `Remove ${c.type}`, onclick: () => remove(c.id)})] : [])),
       el('div', {className: 'track'},
         el('div', {className: 'bar', style: `width:${w}%`}),
         el('span', {className: 'bar-val', style: `left:${w}%`, textContent: `${fmt(c.kwh)} kWh`})));
   }));
+}
+
+function render(r) {
+  summary(r); findings(r); bars(r);
+}
+
+$('add').onsubmit = async e => {
+  e.preventDefault();
+  try {
+    render(await get('/api/devices', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({flat: $('flat').value, name: $('dev-name').value,
+        watts: +$('dev-watts').value, hours: +$('dev-hours').value})}));
+    e.target.reset();
+    $('add-msg').textContent = '';
+  } catch (err) {
+    $('add-msg').textContent = err.message;
+  }
+};
+
+async function remove(id) {
+  try {
+    render(await get(`/api/devices?flat=${encodeURIComponent($('flat').value)}&id=${encodeURIComponent(id)}`,
+      {method: 'DELETE'}));
+  } catch (err) {
+    $('add-msg').textContent = err.message;
+  }
 }
 
 let board;
@@ -189,7 +231,7 @@ async function show(flat) {
   compare(flat);
   try {
     const r = await get(`/api/report?flat=${encodeURIComponent(flat)}`);
-    summary(r); findings(r); bars(r);
+    render(r);
   } catch (e) {
     $('summary').textContent = `Could not load the report: ${e.message}`;
   }
