@@ -80,6 +80,13 @@ button:disabled { opacity: .6; cursor: wait; }
   <div class="card">
     <label for="flat">Your flat</label>
     <select id="flat"></select>
+    <p style="margin-top:16px"><b>Add a flat</b></p>
+    <form class="add" id="add-flat">
+      <input id="flat-residents" type="number" min="1" max="20" required placeholder="Residents" aria-label="Number of residents">
+      <input id="flat-area" type="number" min="1" max="1000" step="any" required placeholder="Floor area (m²)" aria-label="Floor area in square metres">
+      <button type="submit">Add flat</button>
+    </form>
+    <p class="muted" id="flat-msg" aria-live="polite"></p>
   </div>
 
   <div class="card" id="summary" aria-live="polite"></div>
@@ -138,6 +145,12 @@ async function get(url, opts) {
 
 function summary(r) {
   const s = r.savings, p = r.per_student;
+  if (!r.channels.some(c => c.channel !== 'added')) {
+    $('summary').replaceChildren(el('p', {textContent: `${r.flat} was added by hand and has no meter data, so WasteWatt can't look for waste yet. ` +
+      (r.channels.length ? `Its added devices use about ${fmt(r.use.kwh)} kWh (${fmt(r.use.sek)} SEK) a year.`
+        : 'Add its devices below to estimate its yearly use.')}));
+    return;
+  }
   $('summary').replaceChildren(s.sek > 0
     ? el('div', {},
         el('p', {className: 'muted', textContent: 'Your flat could save every year'}),
@@ -222,8 +235,9 @@ function compare(flat) {
         el('span', {className: 'bar-val', style: `left:${w}%`, textContent: `${fmt(r.per_resident)} kWh`})));
   }));
   const mine = board.flats.find(r => r.flat === flat);
-  $('board-note').textContent = `Estimated kWh per resident per year. Median flat: ${fmt(board.median)} kWh. ` + (mine.outlier
-    ? `Your flat uses ${mine.ratio}x the median; its biggest circuit is the ${mine.top}.`
+  $('board-note').textContent = `Estimated kWh per resident per year. Median flat: ${fmt(board.median)} kWh. ` + (
+    !mine ? 'Flats added by hand have no meter data, so they are not ranked.'
+    : mine.outlier ? `Your flat uses ${mine.ratio}x the median; its biggest circuit is the ${mine.top}.`
     : `Flats at ${board.threshold}x the median or more are flagged. Only flats are compared, never individual people.`);
 }
 
@@ -254,12 +268,26 @@ $('coach').onsubmit = async e => {
   }
 };
 
-async function init() {
+$('add-flat').onsubmit = async e => {
+  e.preventDefault();
+  try {
+    const {flat} = await get('/api/flats', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({residents: +$('flat-residents').value, area: +$('flat-area').value})});
+    e.target.reset();
+    $('flat-msg').textContent = `Added ${flat}. Now add its devices under "Where your electricity goes".`;
+    await load(flat);
+  } catch (err) {
+    $('flat-msg').textContent = err.message;
+  }
+};
+
+async function load(pick) {
   const {flats, fleet, quality, leaderboard} = await get('/api/flats');
   board = leaderboard;
-  $('flat').replaceChildren(...Object.entries(flats).map(([id, n]) =>
-    el('option', {value: id, textContent: `${id} (${n} residents)`})));
-  $('flat').onchange = e => { $('answer').textContent = ''; show(e.target.value); };
+  $('flat').replaceChildren(...Object.entries(flats).map(([id, f]) =>
+    el('option', {value: id, textContent: `${id} (${f.residents} residents${f.added ? ', added' : ''})`})));
+  if (pick) $('flat').value = pick;
+  $('flat').onchange = e => { $('answer').textContent = ''; $('flat-msg').textContent = ''; show(e.target.value); };
   const fixed = ['duplicate rows removed', 'impossible values dropped', 'missing values (not zero)', 'Wh converted to kWh', 'orphan appliance rows dropped'];
   $('quality').replaceChildren(
     el('p', {textContent: `Synthetic organiser dataset: 8 flats, ${fleet.residents} residents, 4 autumn weeks. ` +
@@ -270,7 +298,7 @@ async function init() {
       `Yearly figures scale four weeks of October data and are estimates.`}));
   show($('flat').value);
 }
-init().catch(e => { $('summary').textContent = `Could not reach the server: ${e.message}`; });
+load().catch(e => { $('summary').textContent = `Could not reach the server: ${e.message}`; });
 </script>
 </body>
 </html>
