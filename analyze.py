@@ -30,15 +30,18 @@ def rates(d, area):
     return (mean(s for s, _ in ps if s is not None) + GRID + TAX) * VAT, mean(c for _, c in ps if c is not None)
 
 
-def finding(d, app, k, title, detail, action, kwh, sek=None, co2=None):
+def finding(d, app, k, title, detail, action, kwh, sek=None, co2=None, evidence=None):
     flat = app.split('-')[0]
     price, carbon = rates(d, d['flats'][flat]['price_area'])
     if sek is None:
         sek = kwh * price
     if co2 is None:
         co2 = kwh * carbon / 1000
-    return {'flat': flat, 'channel': app, 'type': kind(app), 'kind': k, 'title': title, 'detail': detail,
-            'action': action, 'kwh': round(kwh), 'sek': round(sek), 'co2': round(co2, 1)}
+    res = {'flat': flat, 'channel': app, 'type': kind(app), 'kind': k, 'title': title, 'detail': detail,
+           'action': action, 'kwh': round(kwh), 'sek': round(sek), 'co2': round(co2, 1)}
+    if evidence is not None:
+        res['evidence'] = evidence
+    return res
 
 
 def always_on(s):
@@ -64,13 +67,21 @@ def faults(d):
             if med[day] < 1.5 * base:
                 break
             start = day
+        ev = {
+            'type': 'timeseries',
+            'series': [{'day': day[5:], 'watts': round(med[day] * 1000)} for day in days],
+            'fault_day': start[5:],
+            'base_w': round(base * 1000),
+            'now_w': round(now * 1000),
+            'label': 'Daily median power (W)'
+        }
         out.append(finding(
             d, app, 'fault', f'Your {kind(app)} uses {now / base:.1f}x its normal power since {start}',
             f'It drew {base * 1000:.0f} W on average, now {now * 1000:.0f} W, day and night. A sudden jump '
             'that lasts is a fault (door seal, thermostat, ice build-up), not a bad meter reading.',
             'Check the door seal and defrost it. If it stays high, report it to your landlord: '
             'broken white goods are usually theirs to fix.',
-            (now - base) * YEAR_H))
+            (now - base) * YEAR_H, evidence=ev))
     return out
 
 
@@ -86,13 +97,28 @@ def baseload(d, skip=()):
         peer = median(by[app.split('-')[1]])
         if v < 2 * peer or v - peer < 0.03:
             continue
+        s = d['kwh'][app]
+        flat_curve = [round(median([v for ts, v in s.items() if d['local'].get(ts) == h] or [0]) * 1000) for h in range(24)]
+        peer_hourly = []
+        for h in range(24):
+            vs = [val for a, s_a in d['kwh'].items() if a.split('-')[1] == app.split('-')[1] and always_on(s_a)
+                  for ts, val in s_a.items() if d['local'].get(ts) == h]
+            peer_hourly.append(round(median(vs) * 1000) if vs else 0)
+        ev = {
+            'type': 'profile_24h',
+            'hours': list(range(24)),
+            'flat_w': flat_curve,
+            'peer_w': peer_hourly,
+            'night_window': [1, 5],
+            'label': '24-hour load curve (W)'
+        }
         out.append(finding(
             d, app, 'always-on', f'Your {kind(app)} circuit draws {v * 1000:.0f} W all night, {v / peer:.1f}x similar flats',
             f'Between 01:00 and 05:00, when everyone sleeps, this circuit uses {v * 1000:.0f} W. The same circuit in '
             f'the other flats uses {peer * 1000:.0f} W. Something is left on around the clock.',
             'Find what is plugged in there (gaming PC, server, old router, TV box). Turn on sleep mode, '
             'or put it on a timer plug that switches it off at night.',
-            (v - peer) * YEAR_H))
+            (v - peer) * YEAR_H, evidence=ev))
     return out
 
 
@@ -111,6 +137,14 @@ def heater(d):
                 empty += v
         if warm + empty == 0:
             continue
+        useful = sum(v for ts, v in s.items() if (d['ctx'].get((flat, ts), {}).get('in') or 0) < WARM and (d['ctx'].get((flat, ts), {}).get('occ') or 0) > 0)
+        ev = {
+            'type': 'breakdown',
+            'useful_kwh': round(useful),
+            'warm_kwh': round(warm),
+            'empty_kwh': round(empty),
+            'label': 'Observed heater energy (kWh)'
+        }
         out.append(finding(
             d, app, 'heating', 'Your heater runs when the room is already warm or empty',
             f'Over {len(d["hours"]) // 168} weeks, {(warm + empty) / sum(s.values()):.0%} of the heater\'s energy went '
@@ -118,7 +152,7 @@ def heater(d):
             f'({empty:.0f} kWh). District heating already keeps the flat warm; the heater only tops up.',
             'Set the heater thermostat to 21 °C and plug it into a timer plug that cuts power when you leave. '
             'Each degree lower saves about 5 % heating energy.',
-            (warm + empty) / len(s) * HEAT_DAYS * 24))
+            (warm + empty) / len(s) * HEAT_DAYS * 24, evidence=ev))
     return out
 
 
@@ -144,6 +178,15 @@ def shift(d):
         if not frm:
             continue
         k = 365 * 24 / len(hours)
+        avg_prices = [round(mean([p[ts][0] for ts in hours if d['local'].get(ts) == h and p[ts][0] is not None] or [0]), 2) for h in range(24)]
+        ev = {
+            'type': 'price_profile',
+            'hours': list(range(24)),
+            'prices': avg_prices,
+            'run_h': frm.most_common(1)[0][0],
+            'shift_h': to.most_common(1)[0][0],
+            'label': 'Average spot price by hour (SEK/kWh)'
+        }
         out.append(finding(
             d, app, 'timing', f'Delay-start your {kind(app)}: same energy, lower price',
             f'It usually runs around {frm.most_common(1)[0][0]:02d}:00. '
@@ -151,7 +194,7 @@ def shift(d):
             ('The cheaper hours are also cleaner.' if co2 >= 0 else
              'The cheaper hours have slightly more CO2e, so this saves money, not carbon.'),
             f'Press delay-start so it runs around {to.most_common(1)[0][0]:02d}:00 instead.',
-            0, sek * k, co2 * k))
+            0, sek * k, co2 * k, evidence=ev))
     return out
 
 
@@ -171,6 +214,14 @@ def away(d, skip=()):
             continue
         waste_kwh = sum(v - standby for _, v in waste)
         avg_draw = mean(v for _, v in waste)
+        ev = {
+            'type': 'away_stats',
+            'standby_w': round(standby * 1000),
+            'waste_w': round(avg_draw * 1000),
+            'normal_hours': len(empty) - len(waste),
+            'waste_hours': len(waste),
+            'label': 'Unoccupied hours consumption'
+        }
         out.append(finding(
             d, app, 'away', f'Your {kind(app)} is left on while everyone is out ({len(waste)} hours)',
             f'In {len(waste)} hours when nobody was home, this circuit drew {avg_draw * 1000:.0f} W '
@@ -178,7 +229,7 @@ def away(d, skip=()):
             f'wasted on an empty flat.',
             'Switch off lights and electronics when leaving the flat. '
             'Consider an entryway reminder note or smart power strips.',
-            waste_kwh / len(s) * YEAR_H))
+            waste_kwh / len(s) * YEAR_H, evidence=ev))
     return out
 
 
