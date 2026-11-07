@@ -26,6 +26,14 @@ class TestDetectors(unittest.TestCase):
         self.assertIn('2026-10-15', f['title'])
         self.assertEqual(f['kwh'], round(0.07 * 8760))
 
+    def test_baseload(self):
+        d = data({'F001-A06': series(lambda i: 0.04), 'F002-A06': series(lambda i: 0.045),
+                  'F003-A06': series(lambda i: 0.15)})
+        [f] = analyze.baseload(d)
+        self.assertEqual((f['channel'], f['kind']), ('F003-A06', 'always-on'))
+        self.assertEqual(f['kwh'], round(0.105 * 8760))
+        self.assertEqual(analyze.baseload(d, skip={'F003-A06'}), [])
+
 
 class TestDataset(unittest.TestCase):
     @classmethod
@@ -35,6 +43,7 @@ class TestDataset(unittest.TestCase):
     def test_planted_issues_found(self):
         got = {(f['channel'], f['kind']) for f in self.fs}
         self.assertIn(('F002-A01', 'fault'), got)
+        self.assertIn(('F005-A06', 'always-on'), got)
 
     def test_no_false_faults(self):
         self.assertEqual([f['channel'] for f in self.fs if f['kind'] == 'fault'], ['F002-A01'])

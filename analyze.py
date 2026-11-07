@@ -35,12 +35,16 @@ def finding(d, app, k, title, detail, action, kwh, sek=None, co2=None):
             'action': action, 'kwh': round(kwh), 'sek': round(sek), 'co2': round(co2, 1)}
 
 
+def always_on(s):
+    return sum(v == 0 for v in s.values()) <= 0.05 * len(s)
+
+
 def faults(d):
     """Sustained level shifts: an appliance that suddenly and lastingly draws much more is likely broken."""
     out = []
     for app, s in d['kwh'].items():
-        if sum(v == 0 for v in s.values()) > 0.05 * len(s):
-            continue  # only always-on loads: switched loads (heaters, cooking) shift with weather and habits
+        if not always_on(s):
+            continue  # switched loads (heaters, cooking) shift with weather and habits
         by = defaultdict(list)
         for ts, v in s.items():
             by[ts[:10]].append(v)
@@ -64,8 +68,32 @@ def faults(d):
     return out
 
 
+def baseload(d, skip=()):
+    """Overnight load far above the same circuit in similar flats: something is left on around the clock."""
+    night = {app: median(v for ts, v in s.items() if 1 <= d['local'][ts] <= 5)
+             for app, s in d['kwh'].items() if always_on(s) and app not in skip}
+    by = defaultdict(list)
+    for app, v in night.items():
+        by[app.split('-')[1]].append(v)
+    out = []
+    for app, v in night.items():
+        peer = median(by[app.split('-')[1]])
+        if v < 2 * peer or v - peer < 0.03:
+            continue
+        out.append(finding(
+            d, app, 'always-on', f'Your {kind(app)} circuit draws {v * 1000:.0f} W all night, {v / peer:.1f}x similar flats',
+            f'Between 01:00 and 05:00, when everyone sleeps, this circuit uses {v * 1000:.0f} W. The same circuit in '
+            f'the other flats uses {peer * 1000:.0f} W. Something is left on around the clock.',
+            'Find what is plugged in there (gaming PC, server, old router, TV box). Turn on sleep mode, '
+            'or put it on a timer plug that switches it off at night.',
+            (v - peer) * YEAR_H))
+    return out
+
+
 def findings(d):
-    fs = [f for f in faults(d) if f['sek'] >= MIN_SEK]
+    fs = faults(d)
+    fs += baseload(d, skip={f['channel'] for f in fs})
+    fs = [f for f in fs if f['sek'] >= MIN_SEK]
     return sorted(fs, key=lambda f: -f['sek'])
 
 
