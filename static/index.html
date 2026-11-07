@@ -63,6 +63,7 @@ button:disabled { opacity: .6; cursor: wait; }
 .bar-row span { font-size: 14px; overflow-wrap: anywhere; }
 .track { position: relative; height: 16px; }
 .bar { height: 16px; background: var(--bar); border-radius: 0 4px 4px 0; min-width: 2px; }
+.me { font-weight: 700; }
 .bar-val { position: absolute; top: -2px; font-size: 13px; color: var(--text-2); white-space: nowrap; padding-left: 6px; }
 @media (max-width: 480px) { .bar-row { grid-template-columns: 1fr; gap: 2px; } .hero { font-size: 40px; } }
 </style>
@@ -94,6 +95,12 @@ button:disabled { opacity: .6; cursor: wait; }
   <div class="card">
     <div id="bars" role="list"></div>
     <p class="muted" style="margin-top:12px">Estimated kWh per year. The dataset has no appliance labels, so types are inferred from each circuit's load pattern.</p>
+  </div>
+
+  <h2>How your flat compares</h2>
+  <div class="card">
+    <div id="board" role="list"></div>
+    <p class="muted" id="board-note" style="margin-top:12px"></p>
   </div>
 
   <h2>About the data</h2>
@@ -157,7 +164,29 @@ function bars(r) {
   }));
 }
 
+let board;
+
+function compare(flat) {
+  const max = Math.max(...board.flats.map(r => r.per_resident));
+  $('board').replaceChildren(...board.flats.map(r => {
+    const me = r.flat === flat;
+    const tip = `${r.flat}: ${fmt(r.per_resident)} kWh per resident per year, ${r.ratio}x the median; biggest circuit: ${r.top}`;
+    const w = r.per_resident / max * 75;
+    return el('div', {className: 'bar-row', role: 'listitem', title: tip, ariaLabel: tip},
+      el('span', {className: me ? 'me' : ''}, me ? `${r.flat} (you) ` : `${r.flat} `,
+        ...(r.outlier ? [el('span', {className: 'badge', textContent: `${r.ratio}x median`})] : [])),
+      el('div', {className: 'track'},
+        el('div', {className: 'bar', style: `width:${w}%`}),
+        el('span', {className: 'bar-val', style: `left:${w}%`, textContent: `${fmt(r.per_resident)} kWh`})));
+  }));
+  const mine = board.flats.find(r => r.flat === flat);
+  $('board-note').textContent = `Estimated kWh per resident per year. Median flat: ${fmt(board.median)} kWh. ` + (mine.outlier
+    ? `Your flat uses ${mine.ratio}x the median; its biggest circuit is the ${mine.top}.`
+    : `Flats at ${board.threshold}x the median or more are flagged. Only flats are compared, never individual people.`);
+}
+
 async function show(flat) {
+  compare(flat);
   try {
     const r = await get(`/api/report?flat=${encodeURIComponent(flat)}`);
     summary(r); findings(r); bars(r);
@@ -184,7 +213,8 @@ $('coach').onsubmit = async e => {
 };
 
 async function init() {
-  const {flats, fleet, quality} = await get('/api/flats');
+  const {flats, fleet, quality, leaderboard} = await get('/api/flats');
+  board = leaderboard;
   $('flat').replaceChildren(...Object.entries(flats).map(([id, n]) =>
     el('option', {value: id, textContent: `${id} (${n} residents)`})));
   $('flat').onchange = e => { $('answer').textContent = ''; show(e.target.value); };

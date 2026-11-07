@@ -60,7 +60,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, UI.read_bytes(), 'text/html; charset=utf-8')
         if u.path == '/api/flats':
             return self.send(200, {'flats': {k: f['residents'] for k, f in D['flats'].items()},
-                                   'fleet': analyze.fleet(D, FS), 'quality': D['quality']})
+                                   'fleet': analyze.fleet(D, FS), 'quality': D['quality'],
+                                   'leaderboard': analyze.leaderboard(D)})
         if u.path == '/api/report':
             flat = parse_qs(u.query).get('flat', [''])[0]
             if flat not in D['flats']:
