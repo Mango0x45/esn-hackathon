@@ -11,6 +11,8 @@ GRID = 0.312  # SEK/kWh excl. VAT; variable transfer fee, Vattenfall Eldistribut
 TAX = 0.36  # SEK/kWh excl. VAT; energy tax on electricity 2026 (Skatteverket)
 VAT = 1.25
 YEAR_H = 8760
+HEAT_DAYS = 212  # Oct-Apr heating season; October is milder than winter, so scaling from it is conservative
+WARM = 22.0  # degC; heating above this is comfort overshoot (common advice: 20-21 degC)
 MIN_SEK = 20  # hide findings too small to be worth a student's time
 KEYS = ('kwh', 'sek', 'co2')
 
@@ -90,9 +92,35 @@ def baseload(d, skip=()):
     return out
 
 
+def heater(d):
+    """Supplementary heater running while the room is already warm or nobody is home."""
+    out = []
+    for app, s in d['kwh'].items():
+        if not app.endswith('-A07') or not s:
+            continue
+        flat, warm, empty = app.split('-')[0], 0, 0
+        for ts, v in s.items():
+            c = d['ctx'].get((flat, ts), {})
+            if c.get('in') is not None and c['in'] >= WARM:
+                warm += v
+            elif c.get('occ') == 0:
+                empty += v
+        if warm + empty == 0:
+            continue
+        out.append(finding(
+            d, app, 'heating', 'Your heater runs when the room is already warm or empty',
+            f'Over {len(d["hours"]) // 168} weeks, {(warm + empty) / sum(s.values()):.0%} of the heater\'s energy went '
+            f'into hours when it was already {WARM:.0f} °C or more inside ({warm:.0f} kWh) or nobody was home '
+            f'({empty:.0f} kWh). District heating already keeps the flat warm; the heater only tops up.',
+            'Set the heater thermostat to 21 °C and plug it into a timer plug that cuts power when you leave. '
+            'Each degree lower saves about 5 % heating energy.',
+            (warm + empty) / len(s) * HEAT_DAYS * 24))
+    return out
+
+
 def findings(d):
     fs = faults(d)
-    fs += baseload(d, skip={f['channel'] for f in fs})
+    fs += baseload(d, skip={f['channel'] for f in fs}) + heater(d)
     fs = [f for f in fs if f['sek'] >= MIN_SEK]
     return sorted(fs, key=lambda f: -f['sek'])
 

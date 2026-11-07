@@ -34,6 +34,13 @@ class TestDetectors(unittest.TestCase):
         self.assertEqual(f['kwh'], round(0.105 * 8760))
         self.assertEqual(analyze.baseload(d, skip={'F003-A06'}), [])
 
+    def test_heater(self):
+        ctx = {('F001', t): {'in': (23.0, 20.0, 20.0)[i % 3], 'occ': (2, 0, 2)[i % 3]} for i, t in enumerate(H)}
+        [f] = analyze.heater(data({'F001-A07': series(lambda i: 0.5)}, ctx))
+        self.assertEqual(f['kind'], 'heating')
+        self.assertEqual(f['kwh'], round(0.5 * 2 / 3 * 212 * 24))
+        self.assertIn('67%', f['detail'])
+
 
 class TestDataset(unittest.TestCase):
     @classmethod
@@ -44,6 +51,7 @@ class TestDataset(unittest.TestCase):
         got = {(f['channel'], f['kind']) for f in self.fs}
         self.assertIn(('F002-A01', 'fault'), got)
         self.assertIn(('F005-A06', 'always-on'), got)
+        self.assertIn(('F007-A07', 'heating'), got)
 
     def test_no_false_faults(self):
         self.assertEqual([f['channel'] for f in self.fs if f['kind'] == 'fault'], ['F002-A01'])
