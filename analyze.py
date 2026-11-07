@@ -1,5 +1,5 @@
 """Find energy waste per flat and price it in kWh, SEK and CO2e per year."""
-from collections import defaultdict
+from collections import Counter, defaultdict
 from statistics import mean, median
 
 from clean import load
@@ -12,6 +12,7 @@ TAX = 0.36  # SEK/kWh excl. VAT; energy tax on electricity 2026 (Skatteverket)
 VAT = 1.25
 YEAR_H = 8760
 HEAT_DAYS = 212  # Oct-Apr heating season; October is milder than winter, so scaling from it is conservative
+SHIFT_H = 12  # longest delay-start common dishwashers and washers offer
 WARM = 22.0  # degC; heating above this is comfort overshoot (common advice: 20-21 degC)
 MIN_SEK = 20  # hide findings too small to be worth a student's time
 KEYS = ('kwh', 'sek', 'co2')
@@ -118,9 +119,42 @@ def heater(d):
     return out
 
 
+def shift(d):
+    """Dishwasher/washer runs in expensive hours that a delay-start could move to the cheapest hour ahead."""
+    out, hours = [], d['hours']
+    for app, s in d['kwh'].items():
+        if not app.endswith('-A04'):
+            continue
+        p = d['price'][d['flats'][app.split('-')[0]]['price_area']]
+        sek = co2 = 0
+        frm, to = Counter(), Counter()
+        for i, ts in enumerate(hours):
+            v, (spot, c) = s.get(ts, 0), p[ts]
+            if v < 0.1 or spot is None:
+                continue
+            # shortcut: each hour of a run moves on its own; fine for 1-2 hour programmes
+            best = min((h for h in hours[i:i + SHIFT_H + 1] if p[h][0] is not None), key=lambda h: p[h][0])
+            sek += v * (spot - p[best][0]) * VAT
+            co2 += v * (c - p[best][1]) / 1000
+            frm[d['local'][ts]] += 1
+            to[d['local'][best]] += 1
+        if not frm:
+            continue
+        k = 365 * 24 / len(hours)
+        out.append(finding(
+            d, app, 'timing', f'Delay-start your {kind(app)}: same energy, lower price',
+            f'It usually runs around {frm.most_common(1)[0][0]:02d}:00. '
+            f'Within {SHIFT_H} hours there is almost always a cheaper hour. ' +
+            ('The cheaper hours are also cleaner.' if co2 >= 0 else
+             'The cheaper hours have slightly more CO2e, so this saves money, not carbon.'),
+            f'Press delay-start so it runs around {to.most_common(1)[0][0]:02d}:00 instead.',
+            0, sek * k, co2 * k))
+    return out
+
+
 def findings(d):
     fs = faults(d)
-    fs += baseload(d, skip={f['channel'] for f in fs}) + heater(d)
+    fs += baseload(d, skip={f['channel'] for f in fs}) + heater(d) + shift(d)
     fs = [f for f in fs if f['sek'] >= MIN_SEK]
     return sorted(fs, key=lambda f: -f['sek'])
 

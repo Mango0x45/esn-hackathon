@@ -41,6 +41,16 @@ class TestDetectors(unittest.TestCase):
         self.assertEqual(f['kwh'], round(0.5 * 2 / 3 * 212 * 24))
         self.assertIn('67%', f['detail'])
 
+    def test_shift(self):
+        d = data({'F001-A04': series(lambda i: 0.5 if i % 24 == 20 else 0)},
+                 spot=lambda i: {20: 2.0, 2: 0.5}.get(i % 24, 1.0), carbon=lambda i: 30.0 if i % 24 == 2 else 40.0)
+        [f] = analyze.shift(d)
+        self.assertEqual((f['kind'], f['kwh']), ('timing', 0))
+        # the last evening has no 02:00 ahead within the window, so it moves to a 1.0 SEK hour instead
+        self.assertEqual(f['sek'], round((27 * 0.5 * 1.5 + 0.5 * 1.0) * 1.25 * 365 / 28))
+        self.assertIn('20:00', f['detail'])
+        self.assertIn('02:00', f['action'])
+
 
 class TestDataset(unittest.TestCase):
     @classmethod
