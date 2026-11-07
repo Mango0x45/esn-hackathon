@@ -1,4 +1,5 @@
 """WasteWatt web app: serves the UI and the analysis API on http://localhost:8000."""
+from datetime import datetime
 import json
 import threading
 import uuid
@@ -19,6 +20,7 @@ FS = analyze.findings(D)
 UI = Path(__file__).parent / 'static' / 'index.html'
 DEVICES = Path(__file__).parent / 'devices.json'  # unmeasured devices residents add by hand, per flat
 FLATS = Path(__file__).parent / 'flats.json'  # flats added by hand; they have no meter data
+TICKETS = Path(__file__).parent / 'tickets.json'  # landlord fault reports and maintenance tickets
 LOCK = threading.Lock()
 COACH = """You are WasteWatt, an energy coach for students living in shared flats in Sweden.
 You get a JSON report for one flat: estimated yearly electricity per circuit and the waste the analysis found,
@@ -34,13 +36,25 @@ each with yearly kWh, SEK and kg CO2e savings and a suggested action.
 
 
 def saved(path):
-    return json.loads(path.read_text()) if path.exists() else {}
+    if not path.exists():
+        return {}
+    txt = path.read_text().strip()
+    return json.loads(txt) if txt else {}
 
 
 def save(path, obj):
     tmp = path.with_suffix('.tmp')
     tmp.write_text(json.dumps(obj, indent=1))
     tmp.replace(path)  # atomic, so a crash mid-write can't corrupt the file
+
+
+def tickets_list():
+    raw = saved(TICKETS)
+    return raw if isinstance(raw, list) else []
+
+
+def save_tickets(ts):
+    save(TICKETS, ts)
 
 
 def flats():
@@ -108,11 +122,17 @@ class Handler(BaseHTTPRequestHandler):
             if flat not in flats():
                 return self.send(400, {'error': f'unknown flat {flat!r}'})
             return self.send(200, report(flat))
+        if u.path == '/api/tickets':
+            flat = parse_qs(u.query).get('flat', [''])[0]
+            ts = tickets_list()
+            if flat:
+                ts = [t for t in ts if t['flat'] == flat]
+            return self.send(200, {'tickets': ts})
         self.send(404, {'error': 'not found'})
 
     def do_POST(self):
         path = urlparse(self.path).path
-        if path not in ('/api/coach', '/api/devices', '/api/flats'):
+        if path not in ('/api/coach', '/api/devices', '/api/flats', '/api/tickets', '/api/tickets/status'):
             return self.send(404, {'error': 'not found'})
         try:
             n = int(self.headers.get('Content-Length', 0))
@@ -121,12 +141,47 @@ class Handler(BaseHTTPRequestHandler):
                 new = {'residents': int(body['residents']), 'area': float(body['area']), 'price_area': 'SE3'}
             elif path == '/api/coach':
                 flat, question = str(body['flat']), str(body.get('question', ''))[:500]
+            elif path in ('/api/tickets', '/api/tickets/status'):
+                flat = str(body.get('flat', ''))
             else:
                 flat = str(body['flat'])
                 dev = {'name': str(body['name']).strip()[:40], 'watts': float(body['watts']),
                        'hours': float(body['hours'])}
         except (ValueError, KeyError, TypeError):
             return self.send(400, {'error': 'expected a JSON object under 10 kB with the documented fields'})
+        if path == '/api/tickets':
+            if flat not in flats():
+                return self.send(400, {'error': f'unknown flat {flat!r}'})
+            with LOCK:
+                ts = tickets_list()
+                tid = f"T{len(ts) + 1:03d}"
+                ticket = {
+                    'id': tid,
+                    'flat': flat,
+                    'channel': str(body.get('channel', '')).strip(),
+                    'appliance': str(body.get('appliance', '')).strip(),
+                    'title': str(body.get('title', '')).strip(),
+                    'detail': str(body.get('detail', '')).strip(),
+                    'action': str(body.get('action', '')).strip(),
+                    'notes': str(body.get('notes', '')).strip()[:500],
+                    'kwh': int(body.get('kwh', 0)),
+                    'sek': int(body.get('sek', 0)),
+                    'status': 'open',
+                    'created_at': datetime.now().strftime('%Y-%m-%d %H:%M')
+                }
+                ts.insert(0, ticket)
+                save_tickets(ts)
+            return self.send(201, {'ticket': ticket, 'tickets': ts})
+        if path == '/api/tickets/status':
+            tid = str(body.get('id', '')).strip()
+            new_status = 'resolved' if body.get('status') == 'resolved' else 'open'
+            with LOCK:
+                ts = tickets_list()
+                for t in ts:
+                    if t['id'] == tid:
+                        t['status'] = new_status
+                save_tickets(ts)
+            return self.send(200, {'tickets': ts})
         if path == '/api/flats':
             return self.send(*add_flat(new))
         if flat not in flats():
@@ -145,9 +200,15 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):
         u = urlparse(self.path)
-        if u.path != '/api/devices':
+        if u.path not in ('/api/devices', '/api/tickets'):
             return self.send(404, {'error': 'not found'})
         q = parse_qs(u.query)
+        if u.path == '/api/tickets':
+            tid = q.get('id', [''])[0]
+            with LOCK:
+                ts = [t for t in tickets_list() if t['id'] != tid]
+                save_tickets(ts)
+            return self.send(200, {'tickets': ts})
         flat, dev = q.get('flat', [''])[0], q.get('id', [''])[0]
         if flat not in flats():
             return self.send(400, {'error': f'unknown flat {flat!r}'})
